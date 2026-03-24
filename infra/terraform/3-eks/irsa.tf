@@ -1,6 +1,10 @@
 ################################################################################
 # IRSA Roles – Layer 3 (EKS-005)
 # One role per workload, least-privilege IAM policies.
+#
+# NOTE: ALB Controller and External Secrets IRSA are in Layer 4, co-located
+# with their Helm charts. Only workloads consumed by FluxCD HelmReleases
+# (which need the ARN injected as a value) live here.
 ################################################################################
 
 # ============================================================================
@@ -23,77 +27,7 @@ module "irsa_ebs_csi" {
 }
 
 # ============================================================================
-# 2. AWS Load Balancer Controller (EKS-008)
-# ============================================================================
-module "irsa_lb_controller" {
-  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
-  version = "~> 5.0"
-
-  role_name                              = "${var.project_name}-lb-ctrl"
-  attach_load_balancer_controller_policy = true
-
-  oidc_providers = {
-    main = {
-      provider_arn               = module.eks.oidc_provider_arn
-      namespace_service_accounts = ["lb-ctrl:aws-load-balancer-controller"]
-    }
-  }
-}
-
-# ============================================================================
-# 3. External Secrets Operator (SM-001 → SM-004)
-# ============================================================================
-resource "aws_iam_policy" "external_secrets" {
-  name        = "${var.project_name}-external-secrets"
-  description = "Allow External Secrets Operator to read Secrets Manager secrets."
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid    = "SecretsManagerList"
-        Effect = "Allow"
-        Action = [
-          "secretsmanager:ListSecrets",
-          "secretsmanager:BatchGetSecretValue",
-        ]
-        Resource = "*"
-      },
-      {
-        Sid    = "SecretsManagerRead"
-        Effect = "Allow"
-        Action = [
-          "secretsmanager:GetSecretValue",
-          "secretsmanager:DescribeSecret",
-          "secretsmanager:GetResourcePolicy",
-          "secretsmanager:ListSecretVersionIds",
-        ]
-        Resource = "arn:${data.aws_partition.current.partition}:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:*"
-      },
-    ]
-  })
-}
-
-module "irsa_external_secrets" {
-  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
-  version = "~> 5.0"
-
-  role_name = "${var.project_name}-external-secrets"
-
-  role_policy_arns = {
-    external_secrets = aws_iam_policy.external_secrets.arn
-  }
-
-  oidc_providers = {
-    main = {
-      provider_arn               = module.eks.oidc_provider_arn
-      namespace_service_accounts = ["external-secrets:external-secrets"]
-    }
-  }
-}
-
-# ============================================================================
-# 4. Loki – S3 storage (OBS-003)
+# 2. Loki – S3 storage (OBS-003)
 # ============================================================================
 resource "aws_iam_policy" "loki" {
   name        = "${var.project_name}-loki"
@@ -139,7 +73,7 @@ module "irsa_loki" {
 }
 
 # ============================================================================
-# 5. LiteLLM – Bedrock access (AI-001 → AI-010)
+# 3. LiteLLM – Bedrock access (AI-001 → AI-010)
 # ============================================================================
 resource "aws_iam_policy" "litellm_bedrock" {
   name        = "${var.project_name}-litellm-bedrock"
@@ -189,7 +123,7 @@ module "irsa_litellm" {
 }
 
 # ============================================================================
-# 6. Coder Provisioner (PROV-001 → PROV-005)
+# 4. Coder Provisioner (PROV-001 → PROV-005)
 # ============================================================================
 resource "aws_iam_policy" "coder_provisioner" {
   name        = "${var.project_name}-coder-provisioner"

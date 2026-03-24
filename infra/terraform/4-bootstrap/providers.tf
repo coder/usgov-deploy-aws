@@ -188,7 +188,6 @@ locals {
   cluster_sg_id     = data.terraform_remote_state.eks.outputs.cluster_security_group_id
   node_sg_id        = data.terraform_remote_state.eks.outputs.node_security_group_id
   primary_sg_id     = data.terraform_remote_state.eks.outputs.cluster_primary_security_group_id
-  irsa_role_arns    = data.terraform_remote_state.eks.outputs.irsa_role_arns
 
   # Derived
   account_id = data.aws_caller_identity.current.account_id
