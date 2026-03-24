@@ -56,6 +56,7 @@ All requirements use **shall** (mandatory), **should** (recommended), or
 | **GitLab CE** (Omnibus + Docker Runner) | EC2 | Git source-of-truth, OIDC provider, CI |
 | **coder-observability** | EKS | Prometheus + Grafana + Loki in one chart |
 | **External Secrets Operator** | EKS | AWS Secrets Manager → K8s Secrets |
+| **Istio** (sidecar mode) | EKS | mTLS for all Coder east-west traffic |
 
 ### 3.2 What's Cut
 
@@ -301,7 +302,20 @@ The single-region IaC is structured to make this additive, not a rewrite.
 | OBS-003 | Grafana Agent **shall** run as DaemonSet on all nodes. | Must |
 | OBS-004 | Grafana **should** be exposed via NLB + TLS at `grafana.dev.gov.demo.coder.com`. | Should |
 
-### 6.12 Security & Compliance
+### 6.12 Istio (Service Mesh / mTLS)
+
+| ID | Requirement | Priority |
+|---|---|---|
+| MESH-001 | Istio **shall** be deployed via Helm (istio/base + istio/istiod), managed by FluxCD. | Must |
+| MESH-002 | Istio **shall** use sidecar mode (not ambient) for maturity and EKS compatibility. | Must |
+| MESH-003 | The `coder`, `coder-provisioner`, and `litellm` namespaces **shall** be labeled `istio-injection=enabled`. | Must |
+| MESH-004 | A `PeerAuthentication` with `mode: STRICT` **shall** be applied to all mesh-enrolled namespaces. | Must |
+| MESH-005 | `istio-system`, `kube-system`, `flux-system`, and `karpenter` namespaces **shall NOT** be in the mesh. | Must |
+| MESH-006 | Istio Ingress Gateway **may** replace NLB for north-south if beneficial; otherwise NLB direct with mesh east-west only. | May |
+| MESH-007 | Istio **shall** be scoped to mTLS only — no VirtualService routing or traffic splitting initially. | Must |
+| MESH-008 | Kiali **may** be deployed for mesh visualization. | May |
+
+### 6.13 Security & Compliance
 
 | ID | Requirement | Priority |
 |---|---|---|
@@ -315,7 +329,7 @@ The single-region IaC is structured to make this additive, not a rewrite.
 | SEC-008 | EC2 host OS **should** be STIG-hardened (best-effort). | Should |
 | SEC-009 | EKS nodes **should** use Bottlerocket FIPS AMIs. | Should |
 
-### 6.13 Bootstrap & Repo Structure
+### 6.14 Bootstrap & Repo Structure
 
 | ID | Requirement | Priority |
 |---|---|---|
@@ -340,6 +354,7 @@ gov.demo.coder.com/
 │       ├── flux-system/
 │       ├── infrastructure/
 │       │   ├── sources/
+│       │   ├── istio/
 │       │   ├── karpenter/
 │       │   ├── external-secrets/
 │       │   └── kustomization.yaml
@@ -358,8 +373,9 @@ gov.demo.coder.com/
 | ID | Requirement | Priority |
 |---|---|---|
 | BOOT-004 | `dependsOn` **shall** enforce infra-before-apps. | Must |
-| BOOT-005 | Sequence: 0-state → 1-network → 2-data → 3-eks → 4-bootstrap → 5-gitlab → Flux reconciles. | Must |
+| BOOT-005 | Sequence: 0-state → 1-network → 2-data → 3-eks → 4-bootstrap (Flux + Karpenter + Istio) → 5-gitlab → Flux reconciles apps. | Must |
 | BOOT-006 | All Helm chart versions **shall** be pinned. | Must |
+| BOOT-007 | Istio **shall** deploy as infrastructure (before apps) so sidecars inject on first app pod creation. | Must |
 
 ---
 
@@ -378,8 +394,9 @@ gov.demo.coder.com/
 | SM-001 – 004 | Secrets | AWS Secrets Manager docs |
 | REG-001 – 003 | Registry | ECR docs |
 | OBS-001 – 004 | Observability | ai.coder.com |
+| MESH-001 – 008 | Istio / mTLS | Istio docs, EKS best practices |
 | SEC-001 – 009 | Security | FIPS 140-2/3, DISA STIG |
-| BOOT-001 – 006 | Bootstrap | FluxCD docs |
+| BOOT-001 – 007 | Bootstrap | FluxCD docs |
 
 ---
 
@@ -396,6 +413,7 @@ gov.demo.coder.com/
 | 7 | Day-1 templates | `dev-codex` (generic dev + Codex CLI + code-server + mux) and `agents-dev` (Coder Agents — server-side AI, no client-side LLM config). See `templates/` directory. |
 | 8 | Coder version | **Latest RC release** required for Coder Agents feature (`CODER_EXPERIMENTS=agents`). |
 | 9 | Coder FIPS build | Build Coder from source with `GOFIPS140=latest` (Go 1.24+ native FIPS 140-3). No cgo/BoringSSL needed. See `docs/CODER_FIPS_BUILD.md`. |
+| 10 | Istio | Sidecar mode, mTLS STRICT on Coder/LiteLLM namespaces only. East-west encryption. No traffic management features initially. |
 
 ---
 
