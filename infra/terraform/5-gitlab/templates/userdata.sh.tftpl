@@ -1,0 +1,522 @@
+#!/bin/bash
+###############################################################################
+# GitLab CE Omnibus — EC2 User Data
+# coder4gov.com — Gov Demo Environment
+#
+# This script runs on first boot to:
+#   1. Format and mount the data EBS volume
+#   2. Enable FIPS mode (GL-002)
+#   3. Install GitLab CE Omnibus (GL-001)
+#   4. Configure gitlab.rb via template
+#   5. Install Docker CE (GL-010)
+#   6. Install and register GitLab Runner with Docker executor (GL-009)
+#   7. Configure ECR credential helper (GL-011)
+#   8. Set up daily backup cron (GL-008)
+#
+# All sensitive values are fetched from AWS Secrets Manager at runtime.
+# No secrets are baked into this script or the AMI.
+###############################################################################
+
+set -euo pipefail
+exec > >(tee /var/log/gitlab-userdata.log) 2>&1
+echo "=== GitLab User Data — started at $(date -u) ==="
+
+# ---------------------------------------------------------------------------
+# Variables injected by Terraform templatefile()
+# ---------------------------------------------------------------------------
+AWS_REGION="${aws_region}"
+PROJECT_NAME="${project_name}"
+DOMAIN_NAME="${domain_name}"
+GITLAB_HOSTNAME="gitlab.${domain_name}"
+S3_BACKUP_BUCKET="${s3_backup_bucket}"
+S3_ARTIFACTS_BUCKET="${s3_artifacts_bucket}"
+S3_LFS_BUCKET="${s3_lfs_bucket}"
+S3_UPLOADS_BUCKET="${s3_uploads_bucket}"
+S3_PACKAGES_BUCKET="${s3_packages_bucket}"
+S3_REGISTRY_BUCKET="${s3_registry_bucket}"
+SES_ENDPOINT="${ses_endpoint}"
+DATA_DEVICE="${data_device}"
+
+# ---------------------------------------------------------------------------
+# 0. Utilities
+# ---------------------------------------------------------------------------
+IMDS_TOKEN=$(curl -sX PUT "http://169.254.169.254/latest/api/token" \
+  -H "X-aws-ec2-metadata-token-ttl-seconds: 300")
+
+get_secrets() {
+  local secret_id="$1"
+  aws secretsmanager get-secret-value \
+    --region "$AWS_REGION" \
+    --secret-id "$secret_id" \
+    --query 'SecretString' \
+    --output text 2>/dev/null || echo ""
+}
+
+# ---------------------------------------------------------------------------
+# 1. Format and mount data volume at /var/opt/gitlab
+# Uses a separate EBS volume for git repository data (data_volume_size var)
+# ---------------------------------------------------------------------------
+echo "=== Mounting data volume ==="
+
+# Wait for the device to appear (EBS attach can lag behind boot)
+for i in $(seq 1 30); do
+  if [ -b "$DATA_DEVICE" ]; then
+    echo "Data device $DATA_DEVICE found."
+    break
+  fi
+  # NVMe devices appear as /dev/nvme1n1 on Nitro instances
+  if [ -b "/dev/nvme1n1" ]; then
+    DATA_DEVICE="/dev/nvme1n1"
+    echo "Data device found as /dev/nvme1n1 (NVMe)."
+    break
+  fi
+  echo "Waiting for data device... ($i/30)"
+  sleep 5
+done
+
+# Only format if no filesystem exists
+if ! blkid "$DATA_DEVICE" &>/dev/null; then
+  echo "Formatting $DATA_DEVICE as xfs..."
+  mkfs.xfs -L gitlab-data "$DATA_DEVICE"
+fi
+
+mkdir -p /var/opt/gitlab
+if ! mountpoint -q /var/opt/gitlab; then
+  mount "$DATA_DEVICE" /var/opt/gitlab
+  # Persist across reboots
+  echo "LABEL=gitlab-data /var/opt/gitlab xfs defaults,nofail 0 2" >> /etc/fstab
+fi
+
+echo "Data volume mounted at /var/opt/gitlab"
+df -h /var/opt/gitlab
+
+# ---------------------------------------------------------------------------
+# 2. Enable FIPS mode (GL-002, SEC-001)
+# AL2023 ships with FIPS-capable crypto modules. We enable the FIPS policy.
+# ---------------------------------------------------------------------------
+echo "=== Enabling FIPS mode ==="
+
+# Install FIPS packages if not already present
+dnf install -y crypto-policies crypto-policies-scripts
+
+# Enable FIPS crypto policy
+update-crypto-policies --set FIPS
+echo "FIPS crypto policy enabled: $(update-crypto-policies --show)"
+
+# Set the kernel FIPS flag for next boot
+# On AL2023, fips-mode-setup handles grub + dracut
+if command -v fips-mode-setup &>/dev/null; then
+  fips-mode-setup --enable || true
+  echo "FIPS mode setup completed (will be fully active after reboot)"
+else
+  # Fallback: set kernel parameter directly
+  grubby --update-kernel=ALL --args="fips=1"
+  echo "FIPS kernel parameter set via grubby"
+fi
+
+# ---------------------------------------------------------------------------
+# 3. Install GitLab CE Omnibus (GL-001)
+# ---------------------------------------------------------------------------
+echo "=== Installing GitLab CE ==="
+
+# Install dependencies
+dnf install -y curl policycoreutils openssh-server perl postfix
+
+# Add the GitLab CE repository
+curl -sS https://packages.gitlab.com/install/repositories/gitlab/gitlab-ce/script.rpm.sh | bash
+
+# Install GitLab CE — external_url set via gitlab.rb below
+EXTERNAL_URL="https://$GITLAB_HOSTNAME" dnf install -y gitlab-ce
+
+echo "GitLab CE installed: $(gitlab-ctl version 2>/dev/null || echo 'checking...')"
+
+# ---------------------------------------------------------------------------
+# 4. Configure gitlab.rb
+# Fetch SMTP credentials from Secrets Manager, then write config
+# ---------------------------------------------------------------------------
+echo "=== Configuring GitLab ==="
+
+# Fetch SES SMTP credentials from Secrets Manager
+SES_CREDS_JSON=$(get_secrets "$PROJECT_NAME/ses/smtp-credentials")
+if [ -n "$SES_CREDS_JSON" ]; then
+  SES_USERNAME=$(echo "$SES_CREDS_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin).get('username',''))")
+  SES_PASSWORD=$(echo "$SES_CREDS_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin).get('password',''))")
+else
+  echo "WARNING: SES credentials not found in Secrets Manager. Email will not work."
+  SES_USERNAME=""
+  SES_PASSWORD=""
+fi
+
+# Write gitlab.rb configuration
+cat > /etc/gitlab/gitlab.rb << 'GITLAB_RB_EOF'
+###############################################################################
+# GitLab CE Configuration — coder4gov.com
+# Auto-generated by Terraform user_data. Do NOT edit manually.
+# Changes will be overwritten on instance replacement.
+###############################################################################
+
+# ---------------------------------------------------------------------------
+# External URL — HTTPS via ALB (GL-005)
+# nginx listens on HTTP; ALB terminates TLS with ACM cert
+# ---------------------------------------------------------------------------
+external_url 'https://GITLAB_HOSTNAME_PLACEHOLDER'
+
+# ---------------------------------------------------------------------------
+# NGINX — Listen on port 80, ALB handles TLS (GL-005)
+# ---------------------------------------------------------------------------
+nginx['listen_port'] = 80
+nginx['listen_https'] = false
+nginx['proxy_set_headers'] = {
+  "X-Forwarded-Proto" => "https",
+  "X-Forwarded-Ssl"   => "on",
+  "Host"              => "GITLAB_HOSTNAME_PLACEHOLDER"
+}
+
+# Real IP from ALB
+nginx['real_ip_trusted_addresses'] = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16']
+nginx['real_ip_header'] = 'X-Forwarded-For'
+nginx['real_ip_recursive'] = 'on'
+
+# HSTS is handled by the ALB, but also set here for defense-in-depth
+nginx['hsts_max_age'] = 31536000
+nginx['hsts_include_subdomains'] = true
+
+# ---------------------------------------------------------------------------
+# SSH — Disabled (GL-016)
+# All Git operations use HTTPS only
+# ---------------------------------------------------------------------------
+gitlab_rails['gitlab_shell_ssh_port'] = 0
+gitlab_sshd['enable'] = false
+
+# ---------------------------------------------------------------------------
+# Bundled PostgreSQL and Redis (GL-003)
+# Single-instance demo — use bundled services
+# ---------------------------------------------------------------------------
+postgresql['enable'] = true
+redis['enable'] = true
+
+# ---------------------------------------------------------------------------
+# S3 Object Storage (GL-004)
+# Uses IAM instance profile — no static keys needed (SEC-004)
+# ---------------------------------------------------------------------------
+
+# Consolidated object storage config
+gitlab_rails['object_store']['enabled'] = true
+gitlab_rails['object_store']['connection'] = {
+  'provider'             => 'AWS',
+  'region'               => 'AWS_REGION_PLACEHOLDER',
+  'use_iam_profile'      => true,
+  'endpoint'             => 'https://s3-fips.AWS_REGION_PLACEHOLDER.amazonaws.com',
+  'path_style'           => false
+}
+
+# Artifacts
+gitlab_rails['object_store']['objects']['artifacts']['bucket'] = 'S3_ARTIFACTS_PLACEHOLDER'
+
+# LFS
+gitlab_rails['object_store']['objects']['lfs']['bucket'] = 'S3_LFS_PLACEHOLDER'
+
+# Uploads
+gitlab_rails['object_store']['objects']['uploads']['bucket'] = 'S3_UPLOADS_PLACEHOLDER'
+
+# Packages
+gitlab_rails['object_store']['objects']['packages']['bucket'] = 'S3_PACKAGES_PLACEHOLDER'
+
+# ---------------------------------------------------------------------------
+# Container Registry — S3 backend
+# ---------------------------------------------------------------------------
+registry['enable'] = true
+registry_external_url 'https://GITLAB_HOSTNAME_PLACEHOLDER:443'
+registry_nginx['listen_port'] = 80
+registry_nginx['listen_https'] = false
+registry['storage'] = {
+  's3' => {
+    'regionendpoint' => 'https://s3-fips.AWS_REGION_PLACEHOLDER.amazonaws.com',
+    'bucket'         => 'S3_REGISTRY_PLACEHOLDER',
+    'region'         => 'AWS_REGION_PLACEHOLDER',
+    'v4auth'         => true
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Backups — Daily to S3 (GL-008)
+# ---------------------------------------------------------------------------
+gitlab_rails['backup_upload_connection'] = {
+  'provider'        => 'AWS',
+  'region'          => 'AWS_REGION_PLACEHOLDER',
+  'use_iam_profile' => true,
+  'endpoint'        => 'https://s3-fips.AWS_REGION_PLACEHOLDER.amazonaws.com',
+  'path_style'      => false
+}
+gitlab_rails['backup_upload_remote_directory'] = 'S3_BACKUP_PLACEHOLDER'
+gitlab_rails['backup_keep_time'] = 2592000  # 30 days in seconds (GL-008)
+
+# ---------------------------------------------------------------------------
+# SMTP — Amazon SES (GL-015, INFRA-013)
+# ---------------------------------------------------------------------------
+gitlab_rails['smtp_enable'] = true
+gitlab_rails['smtp_address'] = "SES_ENDPOINT_PLACEHOLDER"
+gitlab_rails['smtp_port'] = 587
+gitlab_rails['smtp_user_name'] = "SES_USERNAME_PLACEHOLDER"
+gitlab_rails['smtp_password'] = "SES_PASSWORD_PLACEHOLDER"
+gitlab_rails['smtp_domain'] = "DOMAIN_PLACEHOLDER"
+gitlab_rails['smtp_authentication'] = "login"
+gitlab_rails['smtp_enable_starttls_auto'] = true
+gitlab_rails['gitlab_email_from'] = 'noreply@DOMAIN_PLACEHOLDER'
+gitlab_rails['gitlab_email_reply_to'] = 'noreply@DOMAIN_PLACEHOLDER'
+
+# ---------------------------------------------------------------------------
+# Monitoring — Prometheus node exporter for GitLab metrics
+# ---------------------------------------------------------------------------
+prometheus_monitoring['enable'] = true
+node_exporter['enable'] = true
+
+# ---------------------------------------------------------------------------
+# Performance tuning for m7a.2xlarge (8 vCPU / 32 GiB)
+# ---------------------------------------------------------------------------
+puma['worker_processes'] = 4
+puma['min_threads'] = 4
+puma['max_threads'] = 4
+sidekiq['max_concurrency'] = 20
+postgresql['shared_buffers'] = "4GB"
+postgresql['work_mem'] = "32MB"
+postgresql['maintenance_work_mem'] = "512MB"
+
+# ---------------------------------------------------------------------------
+# Security hardening
+# ---------------------------------------------------------------------------
+gitlab_rails['rack_attack_git_basic_auth'] = {
+  'enabled'       => true,
+  'ip_whitelist'  => ["127.0.0.1"],
+  'maxretry'      => 10,
+  'findtime'      => 60,
+  'bantime'       => 3600
+}
+
+# Disable features not needed for demo
+gitlab_rails['gravatar_enabled'] = false
+
+# ---------------------------------------------------------------------------
+# Keycloak OIDC — placeholder (GL-007, KC-011)
+# Configured after Keycloak is deployed. Uncomment and reconfigure.
+# ---------------------------------------------------------------------------
+# gitlab_rails['omniauth_enabled'] = true
+# gitlab_rails['omniauth_allow_single_sign_on'] = ['openid_connect']
+# gitlab_rails['omniauth_block_auto_created_users'] = false
+# gitlab_rails['omniauth_providers'] = [
+#   {
+#     name: "openid_connect",
+#     label: "Keycloak",
+#     args: {
+#       name: "openid_connect",
+#       scope: ["openid", "profile", "email"],
+#       response_type: "code",
+#       issuer: "https://sso.DOMAIN_PLACEHOLDER/realms/gov-demo",
+#       discovery: true,
+#       client_auth_method: "query",
+#       uid_field: "preferred_username",
+#       pkce: true,
+#       client_options: {
+#         identifier: "gitlab",
+#         secret: "<FETCH_FROM_SECRETS_MANAGER>",
+#         redirect_uri: "https://GITLAB_HOSTNAME_PLACEHOLDER/users/auth/openid_connect/callback"
+#       }
+#     }
+#   }
+# ]
+GITLAB_RB_EOF
+
+# Replace placeholders with actual values
+sed -i "s|GITLAB_HOSTNAME_PLACEHOLDER|$GITLAB_HOSTNAME|g"  /etc/gitlab/gitlab.rb
+sed -i "s|AWS_REGION_PLACEHOLDER|$AWS_REGION|g"             /etc/gitlab/gitlab.rb
+sed -i "s|S3_ARTIFACTS_PLACEHOLDER|$S3_ARTIFACTS_BUCKET|g"  /etc/gitlab/gitlab.rb
+sed -i "s|S3_LFS_PLACEHOLDER|$S3_LFS_BUCKET|g"             /etc/gitlab/gitlab.rb
+sed -i "s|S3_UPLOADS_PLACEHOLDER|$S3_UPLOADS_BUCKET|g"     /etc/gitlab/gitlab.rb
+sed -i "s|S3_PACKAGES_PLACEHOLDER|$S3_PACKAGES_BUCKET|g"   /etc/gitlab/gitlab.rb
+sed -i "s|S3_REGISTRY_PLACEHOLDER|$S3_REGISTRY_BUCKET|g"   /etc/gitlab/gitlab.rb
+sed -i "s|S3_BACKUP_PLACEHOLDER|$S3_BACKUP_BUCKET|g"       /etc/gitlab/gitlab.rb
+sed -i "s|SES_ENDPOINT_PLACEHOLDER|$SES_ENDPOINT|g"        /etc/gitlab/gitlab.rb
+sed -i "s|SES_USERNAME_PLACEHOLDER|$SES_USERNAME|g"         /etc/gitlab/gitlab.rb
+sed -i "s|SES_PASSWORD_PLACEHOLDER|$SES_PASSWORD|g"        /etc/gitlab/gitlab.rb
+sed -i "s|DOMAIN_PLACEHOLDER|$DOMAIN_NAME|g"               /etc/gitlab/gitlab.rb
+
+# Reconfigure GitLab
+echo "=== Running gitlab-ctl reconfigure ==="
+gitlab-ctl reconfigure
+
+echo "GitLab CE configured and running."
+
+# ---------------------------------------------------------------------------
+# 5. Install Docker CE (GL-010)
+# Required for GitLab Runner Docker executor
+# ---------------------------------------------------------------------------
+echo "=== Installing Docker CE ==="
+
+dnf install -y docker
+systemctl enable docker
+systemctl start docker
+
+# Add gitlab-runner user to docker group (will be created by runner install)
+usermod -aG docker gitlab-runner 2>/dev/null || true
+
+echo "Docker installed: $(docker --version)"
+
+# ---------------------------------------------------------------------------
+# 6. Configure ECR credential helper for Docker (GL-011)
+# Allows GitLab Runner to pull/push images from ECR
+# ---------------------------------------------------------------------------
+echo "=== Configuring ECR credential helper ==="
+
+# Install amazon-ecr-credential-helper
+dnf install -y amazon-ecr-credential-helper 2>/dev/null || {
+  # Fallback: download binary directly
+  ARCH="amd64"
+  ECR_HELPER_VERSION="0.9.0"
+  curl -Lo /usr/local/bin/docker-credential-ecr-login \
+    "https://amazon-ecr-credential-helper-releases.s3.us-east-2.amazonaws.com/$ECR_HELPER_VERSION/linux-$ARCH/docker-credential-ecr-login"
+  chmod +x /usr/local/bin/docker-credential-ecr-login
+}
+
+# Configure Docker to use ECR credential helper
+mkdir -p /root/.docker
+cat > /root/.docker/config.json << 'EOF'
+{
+  "credHelpers": {
+    "${data_aws_account_id}.dkr.ecr.${aws_region}.amazonaws.com": "ecr-login"
+  }
+}
+EOF
+
+echo "ECR credential helper configured."
+
+# ---------------------------------------------------------------------------
+# 7. Install and register GitLab Runner (GL-009, GL-010)
+# Docker executor on the same host
+# ---------------------------------------------------------------------------
+echo "=== Installing GitLab Runner ==="
+
+# Add GitLab Runner repository
+curl -sS https://packages.gitlab.com/install/repositories/runner/gitlab-runner/script.rpm.sh | bash
+
+dnf install -y gitlab-runner
+
+echo "GitLab Runner installed: $(gitlab-runner --version 2>/dev/null || echo 'checking...')"
+
+# Runner registration happens AFTER GitLab is fully up.
+# We write a helper script that an admin runs once via SSM Session Manager.
+cat > /usr/local/bin/register-gitlab-runner.sh << 'RUNNER_SCRIPT'
+#!/bin/bash
+###############################################################################
+# Register GitLab Runner — run once after GitLab is healthy
+#
+# Usage (via SSM Session Manager):
+#   sudo /usr/local/bin/register-gitlab-runner.sh <REGISTRATION_TOKEN>
+#
+# Or use the new runner authentication token workflow:
+#   sudo /usr/local/bin/register-gitlab-runner.sh --token <RUNNER_AUTH_TOKEN>
+###############################################################################
+set -euo pipefail
+
+if [ "$#" -lt 1 ]; then
+  echo "Usage: $0 <REGISTRATION_TOKEN>"
+  echo "   or: $0 --token <RUNNER_AUTH_TOKEN>"
+  exit 1
+fi
+
+GITLAB_URL="https://GITLAB_HOSTNAME_PLACEHOLDER"
+
+if [ "$1" = "--token" ]; then
+  # New runner authentication token workflow (GitLab 16+)
+  gitlab-runner register \
+    --non-interactive \
+    --url "$GITLAB_URL" \
+    --token "$2" \
+    --executor "docker" \
+    --docker-image "amazonlinux:2023" \
+    --description "gitlab-docker-runner" \
+    --docker-privileged=false \
+    --docker-volumes "/var/run/docker.sock:/var/run/docker.sock" \
+    --docker-network-mode "bridge" \
+    --tag-list "docker,ci,ecr" \
+    --run-untagged="true" \
+    --locked="false"
+else
+  # Legacy registration token workflow
+  gitlab-runner register \
+    --non-interactive \
+    --url "$GITLAB_URL" \
+    --registration-token "$1" \
+    --executor "docker" \
+    --docker-image "amazonlinux:2023" \
+    --description "gitlab-docker-runner" \
+    --docker-privileged=false \
+    --docker-volumes "/var/run/docker.sock:/var/run/docker.sock" \
+    --docker-network-mode "bridge" \
+    --tag-list "docker,ci,ecr" \
+    --run-untagged="true" \
+    --locked="false"
+fi
+
+# Configure ECR credential helper for the runner
+mkdir -p /home/gitlab-runner/.docker
+cp /root/.docker/config.json /home/gitlab-runner/.docker/config.json
+chown -R gitlab-runner:gitlab-runner /home/gitlab-runner/.docker
+
+echo "GitLab Runner registered and ECR helper configured."
+gitlab-runner list
+RUNNER_SCRIPT
+
+sed -i "s|GITLAB_HOSTNAME_PLACEHOLDER|$GITLAB_HOSTNAME|g" /usr/local/bin/register-gitlab-runner.sh
+chmod +x /usr/local/bin/register-gitlab-runner.sh
+
+# Enable and start the runner service (it will idle until registered)
+systemctl enable gitlab-runner
+systemctl start gitlab-runner
+
+# ---------------------------------------------------------------------------
+# 8. Daily backup cron job (GL-008)
+# Runs at 02:00 UTC, uploads to S3
+# ---------------------------------------------------------------------------
+echo "=== Setting up daily backup cron ==="
+
+cat > /etc/cron.d/gitlab-backup << 'CRON_EOF'
+# GitLab CE daily backup — uploads to S3 (GL-008)
+# Runs at 02:00 UTC daily. Retention: 30 days (configured in gitlab.rb).
+SHELL=/bin/bash
+PATH=/opt/gitlab/bin:/opt/gitlab/embedded/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+
+0 2 * * * root /opt/gitlab/bin/gitlab-backup create CRON=1 STRATEGY=copy 2>&1 | logger -t gitlab-backup
+CRON_EOF
+
+chmod 0644 /etc/cron.d/gitlab-backup
+
+echo "Daily backup cron configured (02:00 UTC)."
+
+# ---------------------------------------------------------------------------
+# 9. Install SSM Agent (should be pre-installed on AL2023, ensure running)
+# ---------------------------------------------------------------------------
+echo "=== Ensuring SSM Agent is running ==="
+systemctl enable amazon-ssm-agent
+systemctl start amazon-ssm-agent
+
+# ---------------------------------------------------------------------------
+# 10. Final health check
+# ---------------------------------------------------------------------------
+echo "=== Waiting for GitLab to become healthy ==="
+
+for i in $(seq 1 60); do
+  if curl -sf http://localhost/-/health > /dev/null 2>&1; then
+    echo "GitLab is healthy!"
+    break
+  fi
+  echo "Waiting for GitLab health check... ($i/60)"
+  sleep 10
+done
+
+echo "=== GitLab User Data — completed at $(date -u) ==="
+echo "=== Next steps: ==="
+echo "  1. Verify ALB health check passes"
+echo "  2. Access https://$GITLAB_HOSTNAME"
+echo "  3. Set root password via: sudo gitlab-rake 'gitlab:password:reset[root]'"
+echo "  4. Register runner via: sudo /usr/local/bin/register-gitlab-runner.sh <TOKEN>"
+echo "  5. Configure Keycloak OIDC (after Keycloak is deployed)"
