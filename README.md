@@ -3,7 +3,7 @@
 GovCloud-flavored demo environment for [Coder](https://coder.com). Single-region
 (us-west-2), multi-AZ, FIPS-enabled, GitOps-controlled via FluxCD.
 
-**Status:** Requirements complete. Terraform implementation next.
+**Status:** All Terraform layers written (0–5). FluxCD manifests complete. Ready for deployment.
 
 ## What This Deploys
 
@@ -78,10 +78,10 @@ graph TB
 │   ├── dev-codex/main.tf      # Generic dev workspace + Codex CLI
 │   └── agents-dev/main.tf     # Coder Agents (server-side AI) workspace
 ├── clusters/
-│   └── gov-demo/              # FluxCD kustomizations
+│   └── gov-demo/              # FluxCD kustomizations (Day 2 — GitOps)
 │       ├── flux-system/
-│       ├── infrastructure/    # Istio, Karpenter, ESO, sources
-│       └── apps/              # Coder, LiteLLM, monitoring, provisioners
+│       ├── infrastructure/    # Namespaces, HelmRepos, ExternalSecrets
+│       └── apps/              # Coder, LiteLLM, Keycloak, monitoring
 └── infra/
     └── terraform/
         ├── 0-state/           # S3 backend + DynamoDB lock
@@ -106,11 +106,11 @@ Base domain: `coder4gov.com` (AWS-registered, Route 53 authoritative)
 
 ## AI Models (via LiteLLM)
 
-| Provider | Models |
-|---|---|
-| AWS Bedrock | Claude Sonnet 4.6, Opus 4.6, Haiku 4.5 |
-| OpenAI | GPT-4o, o4-mini |
-| Google | Gemini 2.5 Pro |
+| Provider | Models | Auth |
+|---|---|---|
+| AWS Bedrock | Claude Sonnet 4.6, Opus 4.6, Haiku 4.5 | IRSA (no API key) |
+| OpenAI (direct) | GPT-5.4, GPT-5.3-Codex, GPT-5.4-mini | API key in Secrets Manager |
+| Google Gemini | Gemini 3.1 Pro, Gemini 3 Flash | API key in Secrets Manager |
 
 ## Prerequisites
 
@@ -126,8 +126,20 @@ Before starting Terraform:
 
 ```mermaid
 flowchart LR
-    A[0-state] --> B[1-network] --> C[2-data] --> D[3-eks] --> E[4-bootstrap<br/>Flux + Karpenter + Istio] --> F[5-gitlab] --> G[FluxCD<br/>reconciles apps]
+    A[0-state] --> B[1-network] --> C[2-data] --> D[3-eks] --> E["4-bootstrap<br/>(flux disabled)"] --> F[5-gitlab] --> G["4-bootstrap<br/>(flux enabled)"] --> H["FluxCD reconciles<br/>clusters/gov-demo/"]
+    style A fill:#e1f5fe
+    style B fill:#e1f5fe
+    style C fill:#e1f5fe
+    style D fill:#e1f5fe
+    style E fill:#e1f5fe
+    style F fill:#e1f5fe
+    style G fill:#fff3e0
+    style H fill:#e8f5e9
 ```
+
+> **Terraform owns infrastructure. FluxCD owns application workloads.**
+> See [docs/OPERATIONS.md](docs/OPERATIONS.md) for the full operations guide
+> including the Terraform↔GitOps boundary, day 1/day 2 procedures, and runbooks.
 
 ## Requirements
 
