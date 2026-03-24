@@ -31,9 +31,37 @@ GovCloud-flavored demo environment for [Coder](https://coder.com). Single-region
 - **GovCloud-portable** — all config parameterized; flip `aws_region` to
   `us-gov-west-1` in tfvars, no code changes
 
+## Architecture
+
+```mermaid
+graph TB
+    DNS["Route 53<br/>gov.demo.coder.com"]
+
+    subgraph VPC["us-west-2 · VPC · multi-AZ"]
+        subgraph EKS["EKS: gov-demo"]
+            C[Coder coderd] --- P[Coder provisioner]
+            L[LiteLLM] --- F[FluxCD]
+            I[Istio mTLS] --- O[coder-observability]
+            ESO[Ext Secrets] --- K[Karpenter]
+        end
+        GL[GitLab CE · EC2]
+        RDS[(RDS PG 15)]
+        ECR[ECR]
+        S3[(S3)]
+    end
+
+    AWS[Secrets Mgr · KMS]
+
+    DNS --> C & GL & O
+    GL -- GitOps --> F --> EKS
+    C & L --> RDS
+    ESO --> AWS
+    O --> S3
+```
+
 ## Repo Structure
 
-```
+```text
 ├── docs/
 │   ├── REQUIREMENTS.md        # Full requirements (shall statements, traceability)
 │   ├── BEDROCK_SETUP.md       # Enable Claude models in Bedrock console
@@ -92,8 +120,9 @@ Before starting Terraform:
 
 ## Deploy Sequence
 
-```
-0-state → 1-network → 2-data → 3-eks → 4-bootstrap → 5-gitlab → FluxCD reconciles
+```mermaid
+flowchart LR
+    A[0-state] --> B[1-network] --> C[2-data] --> D[3-eks] --> E[4-bootstrap<br/>Flux + Karpenter + Istio] --> F[5-gitlab] --> G[FluxCD<br/>reconciles apps]
 ```
 
 ## Requirements

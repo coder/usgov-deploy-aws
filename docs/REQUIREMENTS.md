@@ -104,52 +104,42 @@ The single-region IaC is structured to make this additive, not a rewrite.
 
 ## 5. Architecture
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│                    us-west-2 (multi-AZ)                        │
-│                                                                │
-│  Route 53: gov.demo.coder.com (delegated from GCloud DNS)     │
-│    dev.gov.demo.coder.com        → Coder NLB                  │
-│    *.dev.gov.demo.coder.com      → Coder NLB (workspaces)     │
-│    gitlab.gov.demo.coder.com     → GitLab NLB                 │
-│    grafana.dev.gov.demo.coder.com→ Grafana NLB                │
-│                                                                │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │                     VPC (2+ AZs)                          │  │
-│  │                                                          │  │
-│  │  ┌────────────────────────────────────────────────────┐  │  │
-│  │  │              EKS: gov-demo                          │  │  │
-│  │  │                                                    │  │  │
-│  │  │  ┌────────────┐ ┌────────────┐ ┌───────────────┐  │  │  │
-│  │  │  │ Coder      │ │ Coder      │ │ LiteLLM       │  │  │  │
-│  │  │  │ coderd     │ │ provisioner│ │ → Bedrock      │  │  │  │
-│  │  │  │            │ │ (external) │ │ → OpenAI       │  │  │  │
-│  │  │  │            │ │            │ │ → Gemini       │  │  │  │
-│  │  │  └────────────┘ └────────────┘ └───────────────┘  │  │  │
-│  │  │  ┌────────────┐ ┌────────────┐ ┌───────────────┐  │  │  │
-│  │  │  │ FluxCD     │ │ ExtSecrets │ │ coder-observe │  │  │  │
-│  │  │  │ (OSS)      │ │ Operator   │ │ (Prom/Graf/   │  │  │  │
-│  │  │  │            │ │            │ │  Loki)        │  │  │  │
-│  │  │  └────────────┘ └────────────┘ └───────────────┘  │  │  │
-│  │  │  ┌──────────────────────────────────────────────┐  │  │  │
-│  │  │  │         Karpenter (workspace nodes)           │  │  │  │
-│  │  │  └──────────────────────────────────────────────┘  │  │  │
-│  │  └────────────────────────────────────────────────────┘  │  │
-│  │                                                          │  │
-│  │  ┌─────────────┐ ┌──────────────┐ ┌─────────────────┐  │  │
-│  │  │ GitLab CE   │ │ RDS PG 15    │ │ ECR             │  │  │
-│  │  │ (EC2)       │ │ (multi-AZ)   │ │                 │  │  │
-│  │  │ + Docker    │ │ Coder DB +   │ └─────────────────┘  │  │
-│  │  │   Runner    │ │ LiteLLM DB   │                      │  │
-│  │  └─────────────┘ └──────────────┘                      │  │
-│  │  ┌─────────────┐ ┌──────────────┐ ┌─────────────────┐  │  │
-│  │  │ Secrets Mgr │ │ S3           │ │ KMS             │  │  │
-│  │  └─────────────┘ │ (logs, bkup) │ │ (FIPS 140-3)   │  │  │
-│  │                  └──────────────┘ └─────────────────┘  │  │
-│  └──────────────────────────────────────────────────────────┘  │
-│                                                                │
-│  GitOps: GitLab CE ──► FluxCD ──► EKS                         │
-└────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TB
+    R53["Route 53: gov.demo.coder.com<br/>dev. → Coder NLB<br/>*.dev. → Coder workspaces<br/>gitlab. → GitLab NLB<br/>grafana.dev. → Grafana NLB"]
+
+    subgraph REGION["us-west-2 · multi-AZ"]
+        subgraph VPC["VPC"]
+            subgraph EKS["EKS: gov-demo"]
+                CODERD["Coder coderd"]
+                PROV["Coder provisioner<br/>external"]
+                LITELLM["LiteLLM<br/>→ Bedrock / OpenAI / Gemini"]
+                FLUX["FluxCD · OSS"]
+                ESO["External Secrets<br/>Operator"]
+                OBS["coder-observability<br/>Prom / Grafana / Loki"]
+                ISTIO["Istio · sidecar<br/>mTLS STRICT"]
+                KARP["Karpenter<br/>workspace nodes"]
+            end
+
+            GITLAB["GitLab CE · EC2 m7a.2xlarge<br/>+ Docker Runner"]
+            RDS[("RDS PG 15 · multi-AZ<br/>Coder DB + LiteLLM DB")]
+            ECR["ECR"]
+            SM["Secrets Manager"]
+            S3[("S3<br/>logs · backups")]
+            KMS["KMS · FIPS 140-3"]
+        end
+    end
+
+    R53 --> CODERD
+    R53 --> GITLAB
+    R53 --> OBS
+    GITLAB -- "GitOps" --> FLUX
+    FLUX -- "reconciles" --> EKS
+    CODERD --> RDS
+    LITELLM --> RDS
+    ESO --> SM
+    OBS --> S3
+    GITLAB --> S3
 ```
 
 **What you keep alive:** 1 EKS cluster (6 Helm charts) + 1 EC2 (GitLab) + managed AWS services.
