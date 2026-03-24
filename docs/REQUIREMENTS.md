@@ -228,6 +228,7 @@ The single-region IaC is structured to make this additive, not a rewrite.
 | CDR-009 | Pod topology spread **should** distribute across AZs. | Should |
 | CDR-010 | Templates **shall** be stored in GitLab CE, managed via Terraform. | Must |
 | CDR-011 | Templates **should** support both K8s and EC2 workspace types. | Should |
+| CDR-012 | Coder binaries and container images **shall** be built from source with FIPS 140-3 mode enabled (`GOFIPS140=latest`). See `docs/CODER_FIPS_BUILD.md`. | Must |
 
 ### 6.6 Coder Provisioners
 
@@ -394,6 +395,7 @@ gov.demo.coder.com/
 | 6 | LiteLLM spend caps | No spend caps. |
 | 7 | Day-1 templates | `dev-codex` (generic dev + Codex CLI + code-server + mux) and `agents-dev` (Coder Agents — server-side AI, no client-side LLM config). See `templates/` directory. |
 | 8 | Coder version | **Latest RC release** required for Coder Agents feature (`CODER_EXPERIMENTS=agents`). |
+| 9 | Coder FIPS build | Build Coder from source with `GOFIPS140=latest` (Go 1.24+ native FIPS 140-3). No cgo/BoringSSL needed. See `docs/CODER_FIPS_BUILD.md`. |
 
 ---
 
