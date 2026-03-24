@@ -171,7 +171,7 @@ graph TB
 | INFRA-011 | Elastic IPs **should** be allocated for stable ingress. | Should |
 | INFRA-012 | Terraform state **shall** be in S3 + DynamoDB, KMS-encrypted. | Must |
 | INFRA-013 | Amazon SES **shall** be configured in us-west-2 for transactional email (password resets, notifications). | Must |
-| INFRA-014 | The `gov.demo.coder.com` domain **shall** be verified in SES with SPF, DKIM, and DMARC DNS records in Route 53. | Must |
+| INFRA-014 | The `gov.demo.coder.com` domain **shall** be verified in SES with SPF, DKIM, and DMARC DNS records in Route 53. All services **shall** send from `noreply@gov.demo.coder.com`. | Must |
 
 ### 6.2 EKS Cluster
 
@@ -272,7 +272,7 @@ graph TB
 | GL-012 | K8s-based runner on EKS **may** be added later. | May |
 | GL-013 | Host OS **should** be STIG-hardened (best-effort). | Should |
 | GL-014 | ASG (min 1, max 1) **should** provide self-healing. | Should |
-| GL-015 | GitLab **shall** use Amazon SES as its SMTP relay for notification emails. | Must |
+| GL-015 | GitLab **shall** use Amazon SES as its SMTP relay for notification emails (`noreply@gov.demo.coder.com`). | Must |
 
 ### 6.9 Secrets Management
 
@@ -434,7 +434,7 @@ gov.demo.coder.com/
 | 9 | Coder FIPS build | Build Coder from source with `GOFIPS140=latest` (Go 1.24+ native FIPS 140-3). No cgo/BoringSSL needed. See `docs/CODER_FIPS_BUILD.md`. |
 | 10 | Istio | Sidecar mode, mTLS STRICT on Coder/LiteLLM namespaces only. East-west encryption. No traffic management features initially. |
 | 11 | Keycloak | Central SSO, admin-only user provisioning. OIDC for Coder, GitLab, Grafana. All three auto-create users on first login. No self-registration. Shares RDS. `sso.gov.demo.coder.com`. |
-| 12 | Email | Amazon SES for transactional email. Domain verified with SPF/DKIM/DMARC. Used by Keycloak (password resets) and GitLab (notifications). |
+| 12 | Email | Amazon SES, single sender: `noreply@gov.demo.coder.com` for all services (Keycloak, GitLab, Coder if enabled later). Domain verified with SPF/DKIM/DMARC. |
 
 ---
 
