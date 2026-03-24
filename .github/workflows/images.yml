@@ -1,0 +1,154 @@
+# =============================================================================
+# GitHub Actions — Workspace FIPS Images
+# =============================================================================
+#
+# Builds and pushes the FIPS-compliant Coder workspace images to Amazon ECR.
+#
+# Images:
+#   base-fips     — RHEL 9 UBI + FIPS crypto-policies + Docker CE
+#   desktop-fips  — base-fips + XFCE + KasmVNC (depends on base-fips)
+#
+# Triggers:
+#   - Manual dispatch (Actions tab → "Run workflow")
+#   - Push to main when images/base-fips/** or images/desktop-fips/** changes
+#
+# Tags:
+#   - git SHA (immutable)  — e.g. coder-enterprise-fips:a1b2c3d
+#   - latest (mutable)     — convenience tag for rolling updates
+#
+# Required GitHub Secrets:
+#   ECR_REGISTRY  — e.g. 123456789012.dkr.ecr.us-west-2.amazonaws.com
+#   AWS_ROLE_ARN  — IAM role for OIDC federation (ecr:* permissions)
+#
+# =============================================================================
+
+name: "Workspace FIPS Images"
+
+on:
+  # Manual trigger from the GitHub UI
+  workflow_dispatch:
+
+  # Auto-trigger on changes to workspace image definitions
+  push:
+    branches: [main]
+    paths:
+      - "images/base-fips/**"
+      - "images/desktop-fips/**"
+
+# Cancel superseded runs on the same branch
+concurrency:
+  group: workspace-images-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+  AWS_REGION: us-west-2
+  BASE_IMAGE_NAME: coder-enterprise-fips
+  DESKTOP_IMAGE_NAME: coder-enterprise-fips-desktop
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # base-fips — RHEL 9 UBI + FIPS crypto + Docker CE
+  # ---------------------------------------------------------------------------
+  base-fips:
+    name: "Build base-fips"
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # OIDC federation with AWS
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      # Authenticate via GitHub OIDC → AWS IAM role (no long-lived keys)
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Ensure the ECR repository exists (idempotent)
+      - name: Ensure ECR repo
+        run: |
+          aws ecr describe-repositories \
+            --repository-names "${{ env.BASE_IMAGE_NAME }}" 2>/dev/null || \
+          aws ecr create-repository \
+            --repository-name "${{ env.BASE_IMAGE_NAME }}" \
+            --image-scanning-configuration scanOnPush=true \
+            --encryption-configuration encryptionType=AES256
+
+      - name: Build and push base-fips
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          echo "Building ${{ env.BASE_IMAGE_NAME }}..."
+
+          docker build \
+            --tag "${{ env.ECR_REGISTRY }}/${{ env.BASE_IMAGE_NAME }}:${SHORT_SHA}" \
+            --tag "${{ env.ECR_REGISTRY }}/${{ env.BASE_IMAGE_NAME }}:latest" \
+            --file images/base-fips/Dockerfile \
+            images/base-fips/
+
+          echo "Pushing ${{ env.BASE_IMAGE_NAME }}..."
+          docker push "${{ env.ECR_REGISTRY }}/${{ env.BASE_IMAGE_NAME }}:${SHORT_SHA}"
+          docker push "${{ env.ECR_REGISTRY }}/${{ env.BASE_IMAGE_NAME }}:latest"
+
+          echo "### Pushed base-fips" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ env.ECR_REGISTRY }}/${{ env.BASE_IMAGE_NAME }}:${SHORT_SHA}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ env.ECR_REGISTRY }}/${{ env.BASE_IMAGE_NAME }}:latest\`" >> $GITHUB_STEP_SUMMARY
+
+  # ---------------------------------------------------------------------------
+  # desktop-fips — base-fips + XFCE + KasmVNC (depends on base-fips)
+  # ---------------------------------------------------------------------------
+  desktop-fips:
+    name: "Build desktop-fips"
+    needs: base-fips
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # OIDC federation with AWS
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Ensure the ECR repository exists (idempotent)
+      - name: Ensure ECR repo
+        run: |
+          aws ecr describe-repositories \
+            --repository-names "${{ env.DESKTOP_IMAGE_NAME }}" 2>/dev/null || \
+          aws ecr create-repository \
+            --repository-name "${{ env.DESKTOP_IMAGE_NAME }}" \
+            --image-scanning-configuration scanOnPush=true \
+            --encryption-configuration encryptionType=AES256
+
+      # Pull the freshly-pushed base image to use as the FROM target
+      - name: Build and push desktop-fips
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          echo "Pulling base image..."
+          docker pull "${{ env.ECR_REGISTRY }}/${{ env.BASE_IMAGE_NAME }}:latest" || true
+
+          echo "Building ${{ env.DESKTOP_IMAGE_NAME }}..."
+          docker build \
+            --build-arg BASE_IMAGE="${{ env.ECR_REGISTRY }}/${{ env.BASE_IMAGE_NAME }}:latest" \
+            --tag "${{ env.ECR_REGISTRY }}/${{ env.DESKTOP_IMAGE_NAME }}:${SHORT_SHA}" \
+            --tag "${{ env.ECR_REGISTRY }}/${{ env.DESKTOP_IMAGE_NAME }}:latest" \
+            --file images/desktop-fips/Dockerfile \
+            images/desktop-fips/
+
+          echo "Pushing ${{ env.DESKTOP_IMAGE_NAME }}..."
+          docker push "${{ env.ECR_REGISTRY }}/${{ env.DESKTOP_IMAGE_NAME }}:${SHORT_SHA}"
+          docker push "${{ env.ECR_REGISTRY }}/${{ env.DESKTOP_IMAGE_NAME }}:latest"
+
+          echo "### Pushed desktop-fips" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ env.ECR_REGISTRY }}/${{ env.DESKTOP_IMAGE_NAME }}:${SHORT_SHA}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ env.ECR_REGISTRY }}/${{ env.DESKTOP_IMAGE_NAME }}:latest\`" >> $GITHUB_STEP_SUMMARY

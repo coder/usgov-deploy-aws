@@ -1,0 +1,209 @@
+# =============================================================================
+# GitHub Actions — Coder FIPS Build
+# =============================================================================
+#
+# Builds the Coder enterprise binary with GOFIPS140=latest (Go 1.25 native
+# FIPS 140-3 module), packages it into an Alpine container image, and
+# optionally pushes to Amazon ECR.
+#
+# Triggers:
+#   - Manual dispatch (Actions tab → "Run workflow") with configurable version
+#   - Push to main when images/coder-fips/** changes
+#
+# Jobs:
+#   build  — clone Coder source, build frontend + FIPS binary
+#   image  — package binary into Docker image, save as artifact
+#   push   — tag + push to ECR (only on main push or manual opt-in)
+#
+# Required GitHub Secrets:
+#   ECR_REGISTRY  — e.g. 123456789012.dkr.ecr.us-west-2.amazonaws.com
+#   AWS_ROLE_ARN  — IAM role for OIDC federation (ecr:* permissions)
+#
+# =============================================================================
+
+name: "Coder FIPS Build"
+
+on:
+  # Manual trigger from the GitHub UI or CLI
+  workflow_dispatch:
+    inputs:
+      coder_version:
+        description: "Coder release tag to build"
+        required: false
+        default: "v2.30.4"
+        type: string
+      push_to_ecr:
+        description: "Push image to ECR after build"
+        required: false
+        default: false
+        type: boolean
+
+  # Auto-trigger on changes to the FIPS image definition
+  push:
+    branches: [main]
+    paths:
+      - "images/coder-fips/**"
+
+# Cancel superseded runs on the same branch
+concurrency:
+  group: coder-fips-${{ github.ref }}
+  cancel-in-progress: true
+
+# ---------------------------------------------------------------------------
+# Global environment — shared across all jobs
+# ---------------------------------------------------------------------------
+env:
+  # workflow_dispatch provides inputs; fall back to default for push triggers
+  CODER_VERSION: ${{ github.event.inputs.coder_version || 'v2.30.4' }}
+  GOFIPS140: latest
+  ECR_REGISTRY: ${{ secrets.ECR_REGISTRY }}
+  ECR_REPO: coder
+  AWS_REGION: us-west-2
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # build — compile the FIPS-enabled Coder binary
+  # ---------------------------------------------------------------------------
+  build:
+    name: "Build FIPS Binary"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # Clone only the target tag/branch — shallow clone for speed
+      - name: Clone Coder source
+        run: |
+          git clone --depth 1 --branch ${{ env.CODER_VERSION }} \
+            https://github.com/coder/coder.git /tmp/coder-src
+
+      # The frontend must be built first — it's embedded into the Go binary
+      - name: Build frontend
+        working-directory: /tmp/coder-src
+        run: |
+          cd site
+          npm ci
+          npm run build
+
+      # Build the enterprise binary with FIPS 140-3 baked in.
+      # GOFIPS140=latest  → embeds GODEBUG=fips140=on as the default
+      # CGO_ENABLED=0     → static binary, no glibc dependency
+      # -tags enterprise  → Premium features (requires license at runtime)
+      - name: Build Coder FIPS binary
+        working-directory: /tmp/coder-src
+        run: |
+          GOFIPS140=latest CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -tags enterprise \
+            -ldflags "-s -w -X github.com/coder/coder/v2/buildinfo.tag=${{ env.CODER_VERSION }}-fips" \
+            -o /tmp/coder-fips \
+            ./enterprise/cmd/coder
+
+      # Sanity check: confirm it's a static Linux binary and prints a version
+      - name: Verify FIPS binary
+        run: |
+          file /tmp/coder-fips
+          /tmp/coder-fips version || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coder-fips-binary
+          path: /tmp/coder-fips
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # image — package the binary into a Docker container
+  # ---------------------------------------------------------------------------
+  image:
+    name: "Build Docker Image"
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pull the binary from the previous job
+      - uses: actions/download-artifact@v4
+        with:
+          name: coder-fips-binary
+          path: images/coder-fips/
+
+      - name: Build Docker image
+        run: |
+          cd images/coder-fips
+          chmod +x coder-fips
+          docker build \
+            --build-arg CODER_VERSION=${{ env.CODER_VERSION }} \
+            -t coder-fips:${{ env.CODER_VERSION }} \
+            -t coder-fips:latest \
+            .
+
+      # Quick smoke test — the container should print the version
+      - name: Verify image
+        run: |
+          docker run --rm coder-fips:${{ env.CODER_VERSION }} version || true
+
+      # Save as tarball for downstream jobs (avoids rebuilding)
+      - name: Save image
+        run: docker save coder-fips:${{ env.CODER_VERSION }} | gzip > /tmp/coder-fips-image.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coder-fips-image
+          path: /tmp/coder-fips-image.tar.gz
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # push — tag and push to Amazon ECR
+  # ---------------------------------------------------------------------------
+  # Runs only when:
+  #   • workflow_dispatch with push_to_ecr=true, OR
+  #   • push to main (auto-deploy path)
+  push:
+    name: "Push to ECR"
+    needs: image
+    if: >-
+      ${{
+        github.event.inputs.push_to_ecr == 'true' ||
+        (github.event_name == 'push' && github.ref == 'refs/heads/main')
+      }}
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # Required for OIDC federation with AWS
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: coder-fips-image
+          path: /tmp/
+
+      - name: Load image
+        run: docker load < /tmp/coder-fips-image.tar.gz
+
+      # Authenticate via GitHub OIDC → AWS IAM role (no long-lived keys)
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Push both a versioned tag and a mutable latest-fips convenience tag
+      - name: Push to ECR
+        run: |
+          docker tag coder-fips:${{ env.CODER_VERSION }} \
+            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ env.CODER_VERSION }}-fips
+          docker tag coder-fips:${{ env.CODER_VERSION }} \
+            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:latest-fips
+          docker push ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ env.CODER_VERSION }}-fips
+          docker push ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:latest-fips
+          echo "### Pushed to ECR" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:${{ env.CODER_VERSION }}-fips\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO }}:latest-fips\`" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,132 @@
+# =============================================================================
+# GitHub Actions — Terraform Validation
+# =============================================================================
+#
+# Validates all Terraform layers (0-state through 5-gitlab) on every push
+# or pull request that touches infra/terraform/.
+#
+# Jobs:
+#   fmt       — checks formatting across all layers
+#   validate  — runs `terraform init -backend=false && terraform validate` per layer
+#   tflint    — lints each layer with the AWS ruleset (see .tflint.hcl)
+#   security  — Trivy IaC scan for HIGH/CRITICAL misconfigurations (advisory)
+#
+# No cloud credentials are needed — everything runs with -backend=false.
+# =============================================================================
+
+name: "Terraform"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "infra/terraform/**"
+  pull_request:
+    paths:
+      - "infra/terraform/**"
+
+# Cancel superseded runs on the same branch / PR
+concurrency:
+  group: terraform-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # fmt — check canonical formatting across every .tf file
+  # ---------------------------------------------------------------------------
+  fmt:
+    name: "Format Check"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.5"
+
+      # -check  → exit 1 if files need reformatting
+      # -recursive → walk all subdirectories under infra/terraform/
+      - name: terraform fmt
+        run: terraform fmt -check -recursive infra/terraform/
+
+  # ---------------------------------------------------------------------------
+  # validate — init (no backend) + validate for each layer
+  # ---------------------------------------------------------------------------
+  validate:
+    name: "Validate (${{ matrix.layer }})"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false          # run all layers even if one fails
+      matrix:
+        layer:
+          - 0-state
+          - 1-network
+          - 2-data
+          - 3-eks
+          - 4-bootstrap
+          - 5-gitlab
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.5"
+
+      - name: terraform init (no backend)
+        run: terraform init -backend=false
+        working-directory: infra/terraform/${{ matrix.layer }}
+
+      - name: terraform validate
+        run: terraform validate
+        working-directory: infra/terraform/${{ matrix.layer }}
+
+  # ---------------------------------------------------------------------------
+  # tflint — lint each layer with the AWS plugin
+  # ---------------------------------------------------------------------------
+  tflint:
+    name: "TFLint (${{ matrix.layer }})"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        layer:
+          - 0-state
+          - 1-network
+          - 2-data
+          - 3-eks
+          - 4-bootstrap
+          - 5-gitlab
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: terraform-linters/setup-tflint@v4
+
+      # --init downloads the AWS plugin declared in .tflint.hcl
+      - name: tflint init
+        run: tflint --init
+        working-directory: infra/terraform/${{ matrix.layer }}
+
+      # --config points to the shared config at repo root
+      # Path: layer is infra/terraform/<layer>/, so ../../../ = repo root
+      - name: tflint
+        run: tflint --config=../../../.tflint.hcl
+        working-directory: infra/terraform/${{ matrix.layer }}
+
+  # ---------------------------------------------------------------------------
+  # security — Trivy IaC scan (advisory / allow-failure)
+  # ---------------------------------------------------------------------------
+  security:
+    name: "Trivy IaC Scan"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Trivy (config scan)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: config
+          scan-ref: infra/terraform/
+          severity: HIGH,CRITICAL
+        # Advisory only — do not block the pipeline on Trivy findings.
+        # Review findings in the Actions log and fix at your discretion.
+        continue-on-error: true

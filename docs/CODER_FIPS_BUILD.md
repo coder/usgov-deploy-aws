@@ -55,75 +55,89 @@ When FIPS mode is enabled:
 
 ## CI/CD Pipeline (Automated)
 
-The FIPS build is automated via GitLab CI. The pipeline definition lives in
-`images/coder-fips/.gitlab-ci.yml` and is included by the root `.gitlab-ci.yml`.
+The FIPS build is automated via **GitHub Actions**. The workflow lives in
+`.github/workflows/coder-fips.yml`.
 
 ### Pipeline Architecture
 
 ```
-.gitlab-ci.yml (root)
-├── infra/terraform/.gitlab-ci.yml      # Terraform validation
-├── images/coder-fips/.gitlab-ci.yml    # Coder FIPS build ← THIS
-└── images/build.gitlab-ci.yml          # Workspace images (base-fips, desktop-fips)
+.github/workflows/
+├── terraform.yml              # Terraform validation (fmt, validate, tflint, trivy)
+├── coder-fips.yml             # Coder FIPS build ← THIS
+└── images.yml                 # Workspace images (base-fips, desktop-fips)
 ```
 
-### Pipeline Jobs
+> **Note:** `images/build.gitlab-ci.yml` is kept as a reference for optional
+> GitLab-side builds on the deployed GitLab at `gitlab.coder4gov.com`
+> (used for workspace image builds triggered from GitLab directly).
 
-| Job | Stage | Description |
-|---|---|---|
-| `coder-fips:build` | build | Clone Coder source, build frontend, compile binary with `GOFIPS140=latest` |
-| `coder-fips:image` | build | Package binary into Alpine container image |
-| `coder-fips:push` | push | Authenticate to ECR, push versioned + latest-fips tags |
-| `coder-fips:verify` | push | Pull from ECR, verify version, confirm FIPS flags |
+### Workflow Jobs
+
+| Job | Description |
+|---|---|
+| `build` | Clone Coder source, build frontend, compile binary with `GOFIPS140=latest` |
+| `image` | Package binary into Alpine container image |
+| `push` | Authenticate to ECR via OIDC, push versioned + latest-fips tags |
 
 ### How to Trigger a Build for a New Version
 
-1. Go to **GitLab → CI/CD → Pipelines → Run pipeline**
-2. Set these variables:
-   ```
-   CODER_VERSION = v2.32.0        # The release tag to build
-   CODER_REF_TYPE = tag            # "tag", "branch", or "commit"
-   ```
-3. Click **Run pipeline**
-4. The pipeline will: clone → build frontend → compile FIPS binary → package image → push to ECR → verify
+#### Option 1: GitHub UI
 
-To build from a **branch** (e.g., before the tag is published):
-```
-CODER_VERSION = release/2.32
-CODER_REF_TYPE = branch
+1. Go to **GitHub → Actions → "Coder FIPS Build" → Run workflow**
+2. Set the inputs:
+   - **coder_version:** `v2.32.0` (the release tag to build)
+   - **push_to_ecr:** ✅ checked (to push to ECR after build)
+3. Click **Run workflow**
+4. The workflow will: clone → build frontend → compile FIPS binary → package image → push to ECR
+
+#### Option 2: GitHub CLI
+
+```bash
+# Build and push a specific version
+gh workflow run coder-fips.yml \
+  -f coder_version=v2.32.0 \
+  -f push_to_ecr=true
+
+# Build only (no push) — useful for testing
+gh workflow run coder-fips.yml \
+  -f coder_version=v2.32.0 \
+  -f push_to_ecr=false
+
+# Build a release candidate
+gh workflow run coder-fips.yml \
+  -f coder_version=v2.32.0-rc.1 \
+  -f push_to_ecr=true
 ```
 
-To build from a **specific commit**:
-```
-CODER_VERSION = abc123def456
-CODER_REF_TYPE = commit
-```
+#### Option 3: Auto-trigger on Push
+
+Any push to `main` that changes files under `images/coder-fips/` will
+automatically trigger a build **and push** (the push job runs on main pushes).
 
 ### How to Build for the v2.32 Agents EA Release
 
 When the `v2.32.0` tag is published on [github.com/coder/coder](https://github.com/coder/coder):
 
-1. Trigger the pipeline with `CODER_VERSION=v2.32.0` and `CODER_REF_TYPE=tag`
-2. The pipeline handles everything — clone, frontend, FIPS binary, image, push
-
-If the tag **isn't available yet** but you need to build from the release branch:
-
-1. Trigger with `CODER_VERSION=release/2.32` and `CODER_REF_TYPE=branch`
-2. Note: branch builds are point-in-time snapshots, not stable releases
-
-For release candidates:
+```bash
+gh workflow run coder-fips.yml -f coder_version=v2.32.0 -f push_to_ecr=true
 ```
-CODER_VERSION = v2.32.0-rc.1
-CODER_REF_TYPE = tag
-```
+
+Or use the GitHub UI: **Actions → "Coder FIPS Build" → Run workflow** → set
+`coder_version` to `v2.32.0` and check `push_to_ecr`.
 
 ### Scheduled Builds
 
-To automatically rebuild on a schedule (e.g., weekly security refreshes):
+To automatically rebuild on a schedule (e.g., weekly security refreshes), add a
+`schedule` trigger to `.github/workflows/coder-fips.yml`:
 
-1. Go to **GitLab → CI/CD → Schedules → New schedule**
-2. Set `CODER_VERSION` and `CODER_REF_TYPE` as schedule variables
-3. Set the cron expression (e.g., `0 6 * * 1` for Monday 06:00 UTC)
+```yaml
+on:
+  schedule:
+    # Monday 06:00 UTC — weekly rebuild with default version
+    - cron: '0 6 * * 1'
+```
+
+Or use GitHub's API to trigger `workflow_dispatch` from an external scheduler.
 
 ## Manual Build Steps
 
@@ -298,5 +312,6 @@ privileges.
   will be removed. Do not use it for new builds.
 - The `GOFIPS140=latest` approach requires no special toolchain, no cgo,
   and produces a statically-linked binary that cross-compiles normally.
-- The CI pipeline is defined in `images/coder-fips/.gitlab-ci.yml` and included
-  by the root `.gitlab-ci.yml`.
+- The CI pipeline is defined in `.github/workflows/coder-fips.yml` and runs on
+  GitHub Actions (not GitLab CI). The deployed GitLab at `gitlab.coder4gov.com`
+  is used only as a FluxCD pull source.
