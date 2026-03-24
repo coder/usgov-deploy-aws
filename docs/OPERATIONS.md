@@ -35,7 +35,7 @@ The platform is split into two operational phases:
 
 | Component | Runtime | Purpose |
 |---|---|---|
-| Coder (Premium + AI) | EKS | Developer workspaces, AI Bridge, Coder Agents |
+| Coder (Premium + AI) | EKS | Developer workspaces, AI Bridge |
 | LiteLLM | EKS | AI gateway → Bedrock (Claude), OpenAI, Gemini |
 | Keycloak | EKS | Central SSO (OIDC) for Coder, GitLab, Grafana |
 | coder-observability | EKS | Prometheus + Grafana + Loki |

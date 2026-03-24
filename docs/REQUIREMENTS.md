@@ -216,7 +216,7 @@ graph TB
 
 | ID | Requirement | Priority |
 |---|---|---|
-| CDR-001 | Coderd **shall** run on EKS via the official Helm chart. **The deployment shall use the latest RC release** to enable Coder Agents (`CODER_EXPERIMENTS=agents`). See [Coder Agents Early Access](https://coder.com/docs/ai-coder/agents/early-access). | Must |
+| CDR-001 | Coderd **shall** run on EKS via the official Helm chart. **The deployment shall use the latest stable release** (currently v2.30.x). | Must |
 | CDR-002 | Coderd **shall** be exposed via ALB + ACM TLS at `dev.coder4gov.com`. with AWS WAF Web ACL attached. | Must |
 | CDR-003 | Database: RDS PostgreSQL 15+, multi-AZ, automated backups, 7-day retention. LiteLLM shares the same RDS instance (separate database). | Must |
 | CDR-004 | Auth via Keycloak OIDC (`sso.coder4gov.com`). | Must |
@@ -457,8 +457,8 @@ coder4gov.com/
 | 4 | GitLab EC2 instance size | `m7a.2xlarge` (8 vCPU / 32 GiB, AMD EPYC). GitLab Omnibus ~8 GB + Docker runner builds get the rest. Runner executes on the same host. ~$0.46/hr on-demand, ~$338/mo. |
 | 5 | Workspace base image | Custom FIPS images built via GitLab CI → ECR. RHEL 9 UBI with `crypto-policies FIPS` + validated OpenSSL. Two images: `coder-enterprise-fips` (base) and `coder-desktop-fips` (XFCE + KasmVNC). See `images/` directory. |
 | 6 | LiteLLM spend caps | No spend caps. |
-| 7 | Day-1 templates | `dev-codex` (generic dev + Codex CLI + code-server + mux) and `agents-dev` (Coder Agents — server-side AI, no client-side LLM config). See `templates/` directory. |
-| 8 | Coder version | **Latest RC release** required for Coder Agents feature (`CODER_EXPERIMENTS=agents`). |
+| 7 | Day-1 templates | `dev-codex` (generic dev + Codex CLI + code-server + mux). See `templates/` directory. |
+| 8 | Coder version | **Latest stable release** (currently v2.30.x). FIPS binary built from source with `GOFIPS140=latest`. |
 | 9 | Coder FIPS build | Build Coder from source with `GOFIPS140=latest` (Go 1.24+ native FIPS 140-3). No cgo/BoringSSL needed. See `docs/CODER_FIPS_BUILD.md`. |
 | 10 | Istio | Sidecar mode, mTLS STRICT on Coder/LiteLLM namespaces only. East-west encryption. No traffic management features initially. |
 | 11 | Keycloak | Central SSO, admin-only user provisioning. OIDC for Coder, GitLab, Grafana. All three auto-create users on first login. No self-registration. Shares RDS. `sso.coder4gov.com`. |

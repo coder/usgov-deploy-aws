@@ -9,7 +9,7 @@ GovCloud-flavored demo environment for [Coder](https://coder.com). Single-region
 
 | Component | Where | Purpose |
 |---|---|---|
-| Coder (Premium + AI) | EKS | Developer workspaces, AI Bridge, Coder Agents |
+| Coder (Premium + AI) | EKS | Developer workspaces, AI Bridge |
 | LiteLLM | EKS | AI gateway → Bedrock (Claude), OpenAI, Gemini |
 | Karpenter | EKS | Workspace node autoscaling (spot + on-demand) |
 | FluxCD (OSS) | EKS | GitOps reconciliation from GitLab CE |
@@ -75,8 +75,7 @@ graph TB
 │   ├── desktop-fips/Dockerfile# base-fips + XFCE + KasmVNC
 │   └── build.gitlab-ci.yml    # GitLab CI → ECR pipeline
 ├── templates/
-│   ├── dev-codex/main.tf      # Generic dev workspace + Codex CLI
-│   └── agents-dev/main.tf     # Coder Agents (server-side AI) workspace
+│   └── dev-codex/main.tf      # Generic dev workspace + Codex CLI
 ├── clusters/
 │   └── gov-demo/              # FluxCD kustomizations (Day 2 — GitOps)
 │       ├── flux-system/

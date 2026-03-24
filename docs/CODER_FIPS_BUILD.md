@@ -12,6 +12,25 @@ validated by default. There are two approaches to FIPS compliance:
 
 **We use the native Go 1.24+ approach.**
 
+## Why `GOFIPS140=latest` Over `GOEXPERIMENT=boringcrypto`
+
+This is the most important design decision in this pipeline. Here's why:
+
+| | `GOFIPS140=latest` (Go 1.24+) | `GOEXPERIMENT=boringcrypto` |
+|---|---|---|
+| **Mechanism** | Pure Go FIPS 140-3 module in stdlib | BoringSSL via cgo FFI |
+| **Requires cgo?** | ❌ No — `CGO_ENABLED=0` works | ✅ Yes — `CGO_ENABLED=1` + C compiler |
+| **Cross-compile?** | ✅ Normal `GOOS/GOARCH` | ❌ Needs cross-compiler toolchain |
+| **Binary type** | Statically linked | Dynamically linked (glibc) |
+| **Coder source mods?** | None — works with vanilla Coder | None — but Coder's `build_go.sh` uses this path |
+| **FIPS validation** | CMVP in progress (Go 1.24 module) | BoringCrypto has CMVP cert, but Go shim doesn't |
+| **Future** | Long-term path for Go ecosystem | Deprecated, will be removed |
+| **Alpine support?** | ✅ Static binary runs anywhere | ❌ Needs glibc (no Alpine) |
+
+**Bottom line:** `GOFIPS140=latest` produces a static, cross-compilable binary
+with FIPS baked in. No C toolchain, no source modifications, no Alpine
+compatibility issues. It's the path forward for Go FIPS.
+
 ## How It Works
 
 Starting with Go 1.24, every Go program already uses the FIPS 140-3 Go
@@ -34,7 +53,81 @@ When FIPS mode is enabled:
 - `crypto/tls` only negotiates FIPS-approved versions, cipher suites, and algorithms
 - No cgo required — cross-compiles like any Go program
 
-## Build Steps
+## CI/CD Pipeline (Automated)
+
+The FIPS build is automated via GitLab CI. The pipeline definition lives in
+`images/coder-fips/.gitlab-ci.yml` and is included by the root `.gitlab-ci.yml`.
+
+### Pipeline Architecture
+
+```
+.gitlab-ci.yml (root)
+├── infra/terraform/.gitlab-ci.yml      # Terraform validation
+├── images/coder-fips/.gitlab-ci.yml    # Coder FIPS build ← THIS
+└── images/build.gitlab-ci.yml          # Workspace images (base-fips, desktop-fips)
+```
+
+### Pipeline Jobs
+
+| Job | Stage | Description |
+|---|---|---|
+| `coder-fips:build` | build | Clone Coder source, build frontend, compile binary with `GOFIPS140=latest` |
+| `coder-fips:image` | build | Package binary into Alpine container image |
+| `coder-fips:push` | push | Authenticate to ECR, push versioned + latest-fips tags |
+| `coder-fips:verify` | push | Pull from ECR, verify version, confirm FIPS flags |
+
+### How to Trigger a Build for a New Version
+
+1. Go to **GitLab → CI/CD → Pipelines → Run pipeline**
+2. Set these variables:
+   ```
+   CODER_VERSION = v2.32.0        # The release tag to build
+   CODER_REF_TYPE = tag            # "tag", "branch", or "commit"
+   ```
+3. Click **Run pipeline**
+4. The pipeline will: clone → build frontend → compile FIPS binary → package image → push to ECR → verify
+
+To build from a **branch** (e.g., before the tag is published):
+```
+CODER_VERSION = release/2.32
+CODER_REF_TYPE = branch
+```
+
+To build from a **specific commit**:
+```
+CODER_VERSION = abc123def456
+CODER_REF_TYPE = commit
+```
+
+### How to Build for the v2.32 Agents EA Release
+
+When the `v2.32.0` tag is published on [github.com/coder/coder](https://github.com/coder/coder):
+
+1. Trigger the pipeline with `CODER_VERSION=v2.32.0` and `CODER_REF_TYPE=tag`
+2. The pipeline handles everything — clone, frontend, FIPS binary, image, push
+
+If the tag **isn't available yet** but you need to build from the release branch:
+
+1. Trigger with `CODER_VERSION=release/2.32` and `CODER_REF_TYPE=branch`
+2. Note: branch builds are point-in-time snapshots, not stable releases
+
+For release candidates:
+```
+CODER_VERSION = v2.32.0-rc.1
+CODER_REF_TYPE = tag
+```
+
+### Scheduled Builds
+
+To automatically rebuild on a schedule (e.g., weekly security refreshes):
+
+1. Go to **GitLab → CI/CD → Schedules → New schedule**
+2. Set `CODER_VERSION` and `CODER_REF_TYPE` as schedule variables
+3. Set the cron expression (e.g., `0 6 * * 1` for Monday 06:00 UTC)
+
+## Manual Build Steps
+
+If you need to build locally (debugging, testing, or one-off builds):
 
 ### Prerequisites
 
@@ -44,11 +137,11 @@ When FIPS mode is enabled:
 - Docker (for container image build)
 - Git
 
-### 1. Clone the Coder repo at the target RC tag
+### 1. Clone the Coder repo at the target tag
 
 ```bash
-# Use the latest RC release tag
-CODER_VERSION="v2.x.y-rc.z"  # Replace with actual RC tag
+# Use the latest release tag
+CODER_VERSION="v2.31.5"
 git clone --branch "${CODER_VERSION}" --depth 1 https://github.com/coder/coder.git
 cd coder
 ```
@@ -56,99 +149,146 @@ cd coder
 ### 2. Build the FIPS binary
 
 ```bash
-# Build the "fat" binary (frontend embedded) with FIPS mode baked in
-GOFIPS140=latest make build/coder_linux_amd64
+# Build the frontend first (embeds web UI)
+make site/out
+
+# Build the enterprise binary with FIPS mode baked in
+GOFIPS140=latest CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+  go build -tags enterprise \
+    -trimpath \
+    -ldflags "-s -w -X github.com/coder/coder/v2/buildinfo.tag=${CODER_VERSION}" \
+    -o build/coder-fips \
+    ./enterprise/cmd/coder
 
 # Verify FIPS is embedded
-go version -m build/coder_linux_amd64 | grep fips
+go version -m build/coder-fips | grep fips
 # Should show: build GOFIPS140=latest
 ```
-
-The Coder Makefile supports these key targets:
-- `build-fat` — all fat binaries (frontend embedded) for all architectures
-- `build-slim` — slim binaries (no frontend) for all architectures
-- `build/coder_linux_amd64` — single fat binary for linux/amd64
-- `build/coder_${version}_linux_amd64.tag` — Docker image
 
 ### 3. Build the FIPS container image
 
 ```bash
-# Build the Docker image with FIPS binary
-GOFIPS140=latest make build/coder_${CODER_VERSION}_linux_amd64.tag
+# Copy binary into the Dockerfile context
+cp build/coder-fips images/coder-fips/coder-fips
 
-# Tag for ECR
-ECR_REGISTRY="<account>.dkr.ecr.us-west-2.amazonaws.com"
-docker tag "ghcr.io/coder/coder:${CODER_VERSION}" \
-  "${ECR_REGISTRY}/coder:${CODER_VERSION}-fips"
-docker tag "ghcr.io/coder/coder:${CODER_VERSION}" \
-  "${ECR_REGISTRY}/coder:latest-fips"
+# Build
+docker build -t coder:${CODER_VERSION}-fips images/coder-fips/
+
+# Verify
+docker run --rm coder:${CODER_VERSION}-fips /opt/coder version
 ```
 
 ### 4. Push to ECR
 
 ```bash
-aws ecr get-login-password --region us-west-2 | \
+ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+
+aws ecr get-login-password --region "${AWS_DEFAULT_REGION}" | \
   docker login --username AWS --password-stdin "${ECR_REGISTRY}"
 
-# Create repo if it doesn't exist
+# Ensure repo exists
 aws ecr create-repository --repository-name coder \
   --image-scanning-configuration scanOnPush=true \
-  --region us-west-2 2>/dev/null || true
+  --region "${AWS_DEFAULT_REGION}" 2>/dev/null || true
 
+docker tag "coder:${CODER_VERSION}-fips" "${ECR_REGISTRY}/coder:${CODER_VERSION}-fips"
+docker tag "coder:${CODER_VERSION}-fips" "${ECR_REGISTRY}/coder:latest-fips"
 docker push "${ECR_REGISTRY}/coder:${CODER_VERSION}-fips"
 docker push "${ECR_REGISTRY}/coder:latest-fips"
 ```
 
 ### 5. Deploy with Helm
 
-In the Coder Helm values (managed by FluxCD):
+In the Coder Helm values (managed by FluxCD in `clusters/gov-demo/apps/coder-server/`):
 
 ```yaml
 coder:
   image:
-    repo: "<account>.dkr.ecr.us-west-2.amazonaws.com/coder"
-    tag: "latest-fips"
+    repo: "<account>.dkr.ecr.us-gov-west-1.amazonaws.com/coder"
+    tag: "v2.31.5-fips"  # or "latest-fips" for rolling updates
 ```
 
-## Runtime Verification
+## Verifying FIPS Compliance
 
-Once deployed, verify FIPS mode is active:
+### At Build Time
+
+After building the binary, confirm FIPS is embedded:
+
+```bash
+# Check Go build info for FIPS flag
+go version -m build/coder-fips | grep -i fips
+# Expected output includes: build GOFIPS140=latest
+
+# Check that GODEBUG defaults include fips140=on
+go version -m build/coder-fips | grep GODEBUG
+# Expected: build GODEBUG=fips140=on
+```
+
+### At Runtime (in the container)
+
+```bash
+# Run the container and check version
+docker run --rm <ecr-registry>/coder:v2.31.5-fips /opt/coder version
+
+# For Coder v2.32+, check the JSON output for FIPS field
+docker run --rm <ecr-registry>/coder:v2.32.0-fips \
+  /opt/coder version --json | jq '.fips'
+```
+
+### In Kubernetes (after deployment)
 
 ```bash
 # Exec into the coder pod
 kubectl exec -it deploy/coder -n coder -- /bin/sh
 
-# Check the binary
-go version -m /opt/coder  # or wherever the binary lives
+# Check the binary's build info
+/opt/coder version
 
-# Check GODEBUG
+# Verify GODEBUG (should show fips140=on)
 env | grep GODEBUG
-# Should show fips140=on (or fips140=latest)
+
+# Verify TLS only uses FIPS cipher suites (from another pod)
+openssl s_client -connect coder.coder.svc:443 -tls1_3 2>&1 | grep Cipher
 ```
 
-## GitLab CI Integration
+### What to Look For
 
-Add a job to `images/build.gitlab-ci.yml` to automate this:
+| Check | Expected | Meaning |
+|---|---|---|
+| `go version -m` shows `GOFIPS140=latest` | ✅ | FIPS module was selected at build time |
+| `go version -m` shows `GODEBUG=fips140=on` | ✅ | FIPS mode is the default runtime behavior |
+| Binary starts without crash | ✅ | Integrity self-check passed |
+| `crypto/rand` uses DRBG | ✅ | NIST SP 800-90A compliant RNG |
+| TLS negotiates FIPS suites only | ✅ | Non-FIPS cipher suites are rejected |
 
-```yaml
-build-coder-fips:
-  stage: build
-  image: golang:1.24
-  services:
-    - docker:27-dind
-  variables:
-    GOFIPS140: "latest"
-    CODER_VERSION: "v2.x.y-rc.z"  # Pin to specific RC
-  script:
-    - git clone --branch ${CODER_VERSION} --depth 1 https://github.com/coder/coder.git
-    - cd coder
-    - apt-get update && apt-get install -y nodejs npm
-    - GOFIPS140=latest make build/coder_linux_amd64
-    - docker build -t ${ECR_REGISTRY}/coder:${CODER_VERSION}-fips .
-    - docker push ${ECR_REGISTRY}/coder:${CODER_VERSION}-fips
-  rules:
-    - when: manual
-```
+## Key Design Decisions
+
+### Enterprise Build (`-tags enterprise`)
+
+We use `-tags enterprise` and the enterprise entrypoint (`./enterprise/cmd/coder`)
+to get Premium features: external provisioners, workspace proxies, AI Bridge,
+RBAC, audit logging. This requires a **Coder license at runtime** (injected via
+Kubernetes secret), not at build time.
+
+### Frontend Included (`make site/out`)
+
+The build includes `make site/out` to embed the web UI into the binary. Without
+this, you get a "slim" binary that requires a separate frontend deployment. We
+want a single, self-contained artifact.
+
+### Alpine Base Image
+
+The container uses Alpine 3.19 (not RHEL UBI) because:
+- The Coder binary is statically linked (`CGO_ENABLED=0`) — no glibc needed
+- Alpine is ~5MB vs ~200MB for UBI — faster pulls, smaller attack surface
+- Matches Coder's official image pattern
+- Only runtime deps are needed: ca-certificates, curl, git, openssh-client, tini
+
+### Non-Root User (UID 1000)
+
+The container runs as user `coder` (UID 1000), matching Coder's official images
+and standard Kubernetes security contexts. The Coder process needs no root
+privileges.
 
 ## Notes
 
@@ -158,3 +298,5 @@ build-coder-fips:
   will be removed. Do not use it for new builds.
 - The `GOFIPS140=latest` approach requires no special toolchain, no cgo,
   and produces a statically-linked binary that cross-compiles normally.
+- The CI pipeline is defined in `images/coder-fips/.gitlab-ci.yml` and included
+  by the root `.gitlab-ci.yml`.

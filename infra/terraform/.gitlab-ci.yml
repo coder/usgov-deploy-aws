@@ -1,0 +1,242 @@
+# =============================================================================
+# Terraform Validation Pipeline — infra/terraform/
+# =============================================================================
+#
+# Validates all Terraform layers (0-state through 5-gitlab) on every MR and
+# push to main. This catches formatting, syntax, lint, and security issues
+# before any infrastructure changes are applied.
+#
+# Jobs:
+#   terraform:fmt      — Formatting check (always runs)
+#   terraform:validate — Init + validate per layer (parallel matrix)
+#   terraform:tflint   — Lint with AWS ruleset per layer (parallel matrix)
+#   terraform:tfsec    — Security scanning with Trivy (advisory, allow_failure)
+#   terraform:plan     — Plan per layer (manual on MR, auto on main)
+#
+# All jobs use the .terraform-base hidden job for shared configuration.
+#
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Hidden job: shared Terraform configuration
+# ---------------------------------------------------------------------------
+# All terraform:* jobs extend this. It sets the image, environment variables,
+# caching, and change-based rules.
+# ---------------------------------------------------------------------------
+.terraform-base:
+  image:
+    name: hashicorp/terraform:1.5
+    entrypoint: [""]
+  variables:
+    TF_IN_AUTOMATION: "true"
+    TF_INPUT: "false"
+    # Layers to validate — update this list if you add/remove layers
+    TF_LAYERS: "0-state 1-network 2-data 3-eks 4-bootstrap 5-gitlab"
+  cache:
+    key: "terraform-${CI_COMMIT_REF_SLUG}"
+    paths:
+      - infra/terraform/**/.terraform/
+    policy: pull-push
+  # Default: only run when Terraform files change, or on main, or manual trigger
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes:
+        - infra/terraform/**/*
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - infra/terraform/**/*
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
+
+# ---------------------------------------------------------------------------
+# terraform:fmt — Check formatting across all layers
+# ---------------------------------------------------------------------------
+# This runs on EVERY MR/push (not just when infra/ changes) because
+# formatting should never regress, and it's fast (<2s).
+# ---------------------------------------------------------------------------
+terraform:fmt:
+  extends: .terraform-base
+  stage: validate
+  rules:
+    # Always run on MRs and main — formatting is cheap to check
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  script:
+    - echo "Checking Terraform formatting across all layers..."
+    - cd infra/terraform
+    - terraform fmt -check -recursive -diff
+    - echo "✅ All Terraform files are properly formatted."
+
+# ---------------------------------------------------------------------------
+# terraform:validate — Init (no backend) + validate per layer
+# ---------------------------------------------------------------------------
+# Uses parallel:matrix to create one job per layer. Each job runs
+# terraform init -backend=false (no AWS creds needed) then validate.
+# ---------------------------------------------------------------------------
+terraform:validate:
+  extends: .terraform-base
+  stage: validate
+  parallel:
+    matrix:
+      - TF_LAYER:
+          - "0-state"
+          - "1-network"
+          - "2-data"
+          - "3-eks"
+          - "4-bootstrap"
+          - "5-gitlab"
+  script:
+    - echo "Validating layer ${TF_LAYER}..."
+    - cd "infra/terraform/${TF_LAYER}"
+    # Init with no backend — downloads providers but doesn't need credentials
+    - terraform init -backend=false
+    - terraform validate
+    - echo "✅ Layer ${TF_LAYER} is valid."
+
+# ---------------------------------------------------------------------------
+# terraform:tflint — Lint with AWS ruleset per layer
+# ---------------------------------------------------------------------------
+# Uses the tflint image with the AWS ruleset to catch AWS-specific issues
+# (invalid instance types, missing required tags, deprecated resources, etc.).
+# ---------------------------------------------------------------------------
+terraform:tflint:
+  stage: validate
+  image:
+    name: ghcr.io/terraform-linters/tflint:v0.53
+    entrypoint: [""]
+  variables:
+    TF_IN_AUTOMATION: "true"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes:
+        - infra/terraform/**/*
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - infra/terraform/**/*
+  parallel:
+    matrix:
+      - TF_LAYER:
+          - "0-state"
+          - "1-network"
+          - "2-data"
+          - "3-eks"
+          - "4-bootstrap"
+          - "5-gitlab"
+  before_script:
+    # Initialize tflint with the AWS ruleset
+    - |
+      cat > .tflint.hcl <<'EOF'
+      plugin "aws" {
+        enabled = true
+        version = "0.33.0"
+        source  = "github.com/terraform-linters/tflint-ruleset-aws"
+      }
+      EOF
+    - tflint --init
+  script:
+    - echo "Linting layer ${TF_LAYER}..."
+    - cd "infra/terraform/${TF_LAYER}"
+    - tflint --config="${CI_PROJECT_DIR}/.tflint.hcl" --format=compact .
+    - echo "✅ Layer ${TF_LAYER} passed linting."
+
+# ---------------------------------------------------------------------------
+# terraform:tfsec — Security scanning (advisory, non-blocking)
+# ---------------------------------------------------------------------------
+# Runs Trivy (which absorbed tfsec) for security misconfiguration scanning.
+# This is advisory — it reports issues but does NOT block the pipeline.
+# Fix findings when practical; track exceptions in .trivyignore.
+# ---------------------------------------------------------------------------
+terraform:tfsec:
+  stage: validate
+  image:
+    name: aquasec/trivy:0.58.2
+    entrypoint: [""]
+  allow_failure: true  # Advisory — security findings don't block the pipeline
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes:
+        - infra/terraform/**/*
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - infra/terraform/**/*
+  script:
+    - echo "Running Trivy security scan on Terraform configurations..."
+    - trivy config
+        --severity HIGH,CRITICAL
+        --format table
+        --exit-code 1
+        infra/terraform/
+  artifacts:
+    when: always
+    reports:
+      # Trivy can output SARIF for GitLab Security Dashboard integration
+      sast: gl-sast-report.json
+    paths:
+      - gl-sast-report.json
+    expire_in: 30 days
+  after_script:
+    # Also generate SARIF for GitLab's security dashboard (best-effort)
+    - trivy config
+        --severity HIGH,CRITICAL
+        --format sarif
+        --output gl-sast-report.json
+        infra/terraform/ || true
+
+# ---------------------------------------------------------------------------
+# terraform:plan — Generate execution plan per layer
+# ---------------------------------------------------------------------------
+# On main:  Runs automatically when infra/ files change.
+# On MRs:   Manual trigger only (click "play" in the pipeline UI).
+#
+# Requires AWS credentials (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY) set in
+# GitLab CI/CD variables (masked + protected).
+#
+# Plan output is saved as an artifact for review and optional apply.
+# ---------------------------------------------------------------------------
+terraform:plan:
+  extends: .terraform-base
+  stage: validate
+  parallel:
+    matrix:
+      - TF_LAYER:
+          - "0-state"
+          - "1-network"
+          - "2-data"
+          - "3-eks"
+          - "4-bootstrap"
+          - "5-gitlab"
+  rules:
+    # Auto-run on main when infra files change
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - infra/terraform/**/*
+    # Manual trigger on MRs
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes:
+        - infra/terraform/**/*
+      when: manual
+      allow_failure: true  # Don't block MR pipeline if plan isn't triggered
+    # Manual trigger via web UI
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+      when: manual
+      allow_failure: true
+  script:
+    - echo "Planning layer ${TF_LAYER}..."
+    - cd "infra/terraform/${TF_LAYER}"
+    # Use the tfvars if present (for shared variable values)
+    - |
+      TFVARS_ARG=""
+      if [ -f "../terraform.tfvars" ]; then
+        TFVARS_ARG="-var-file=../terraform.tfvars"
+      fi
+    # Full init with backend (needs AWS creds)
+    - terraform init
+    # Generate plan and save to file
+    - terraform plan ${TFVARS_ARG} -out="tfplan-${TF_LAYER}" -input=false
+    - echo "✅ Plan for layer ${TF_LAYER} saved."
+    # Show human-readable summary
+    - terraform show "tfplan-${TF_LAYER}"
+  artifacts:
+    paths:
+      - "infra/terraform/${TF_LAYER}/tfplan-${TF_LAYER}"
+    expire_in: 7 days

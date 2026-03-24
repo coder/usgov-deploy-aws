@@ -17,9 +17,6 @@
 #
 # =============================================================================
 
-stages:
-  - build
-
 # ---------------------------------------------------------------------------
 # Global defaults
 # ---------------------------------------------------------------------------
@@ -35,14 +32,6 @@ variables:
   # Image names
   BASE_IMAGE_NAME: "coder-enterprise-fips"
   DESKTOP_IMAGE_NAME: "coder-enterprise-fips-desktop"
-
-# Only run when image definitions change
-workflow:
-  rules:
-    - changes:
-        - images/**/*
-      when: always
-    - when: never
 
 # ---------------------------------------------------------------------------
 # Hidden job: shared ECR login logic
