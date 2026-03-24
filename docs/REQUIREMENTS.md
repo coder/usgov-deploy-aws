@@ -217,7 +217,7 @@ graph TB
 | ID | Requirement | Priority |
 |---|---|---|
 | CDR-001 | Coderd **shall** run on EKS via the official Helm chart. **The deployment shall use the latest RC release** to enable Coder Agents (`CODER_EXPERIMENTS=agents`). See [Coder Agents Early Access](https://coder.com/docs/ai-coder/agents/early-access). | Must |
-| CDR-002 | Coderd **shall** be exposed via NLB + ACM TLS at `dev.gov.demo.coder.com`. | Must |
+| CDR-002 | Coderd **shall** be exposed via ALB + ACM TLS at `dev.gov.demo.coder.com`. with AWS WAF Web ACL attached. | Must |
 | CDR-003 | Database: RDS PostgreSQL 15+, multi-AZ, automated backups, 7-day retention. LiteLLM shares the same RDS instance (separate database). | Must |
 | CDR-004 | Auth via Keycloak OIDC (`sso.gov.demo.coder.com`). | Must |
 | CDR-005 | Workspaces **shall** schedule on Karpenter NodePools. | Must |
@@ -262,7 +262,7 @@ graph TB
 | GL-002 | EC2 **shall** run AL2023 or RHEL 9 with FIPS kernel. | Must |
 | GL-003 | Bundled PostgreSQL and Redis (single-instance demo). | Must |
 | GL-004 | S3 for object storage (LFS, artifacts, backups). | Must |
-| GL-005 | NLB + ACM TLS at `gitlab.gov.demo.coder.com`. | Must |
+| GL-005 | ALB + ACM TLS at `gitlab.gov.demo.coder.com` with AWS WAF Web ACL. | Must |
 | GL-006 | Git source-of-truth for FluxCD + Coder templates. | Must |
 | GL-007 | GitLab **shall** authenticate users via Keycloak OIDC (replacing local username/password). | Must |
 | GL-008 | Daily backups to S3, 30-day retention. | Must |
@@ -273,6 +273,7 @@ graph TB
 | GL-013 | Host OS **should** be STIG-hardened (best-effort). | Should |
 | GL-014 | ASG (min 1, max 1) **should** provide self-healing. | Should |
 | GL-015 | GitLab **shall** use Amazon SES as its SMTP relay for notification emails (`noreply@gov.demo.coder.com`). | Must |
+| GL-016 | GitLab SSH **shall** be disabled. All Git operations **shall** use HTTPS only. | Must |
 
 ### 6.9 Secrets Management
 
@@ -308,7 +309,7 @@ graph TB
 |---|---|---|
 | KC-001 | Keycloak **shall** be deployed on EKS via the Bitnami Helm chart, managed by FluxCD. | Must |
 | KC-002 | Keycloak **shall** use the shared RDS instance (separate database). | Must |
-| KC-003 | Keycloak **shall** be exposed via NLB + ACM TLS at `sso.gov.demo.coder.com`. | Must |
+| KC-003 | Keycloak **shall** be exposed via ALB + ACM TLS at `sso.gov.demo.coder.com` with WAF. `/admin` path **shall** be IP-restricted via WAF rule. | Must |
 | KC-004 | A single realm (`gov-demo`) **shall** be configured with OIDC clients for: Coder, GitLab, Grafana. | Must |
 | KC-005 | Users **shall** be managed locally in Keycloak (no LDAP/AD for demo). | Must |
 | KC-006 | Self-service registration **shall** be disabled. User provisioning is admin-only via Keycloak admin console. | Must |
@@ -319,6 +320,9 @@ graph TB
 | KC-011 | GitLab **shall** auto-create users on first OIDC login (`allow_single_sign_on`). | Must |
 | KC-012 | Grafana **shall** auto-create users on first OIDC login (`auto_login = true`). | Should |
 | KC-013 | Keycloak **shall** use Amazon SES as its SMTP provider for password reset and verification emails (`noreply@gov.demo.coder.com`). | Must |
+| KC-014 | Keycloak **shall** enable brute force detection (lock after 5 failed attempts, 5-min lockout). | Must |
+| KC-015 | Keycloak **shall** enable WebAuthn/Passkeys (Authentication → Policies → WebAuthn Passwordless Policy) for TouchID/FIDO2 MFA. | Must |
+| KC-016 | Passkey registration **shall** be a required action for new users. | Must |
 
 ### 6.13 Istio (Service Mesh / mTLS)
 
@@ -346,8 +350,24 @@ graph TB
 | SEC-007 | NetworkPolicies **should** restrict pod-to-pod traffic. | Should |
 | SEC-008 | EC2 host OS **should** be STIG-hardened (best-effort). | Should |
 | SEC-009 | EKS nodes **should** use Bottlerocket FIPS AMIs. | Should |
+| SEC-010 | AWS Shield Standard **shall** be relied upon for DDoS protection (automatic, no extra config). | Must |
+| SEC-011 | VPC Flow Logs **shall** be enabled and shipped to CloudWatch Logs. | Must |
+| SEC-012 | AWS WAF **shall** be deployed with AWS Managed Rules (Core Rule Set, Known Bad Inputs, Bot Control) on all public-facing ALBs. | Must |
+| SEC-013 | The AWS Load Balancer Controller **shall** be deployed to provision ALBs from Kubernetes Ingress resources with WAF annotation support. | Must |
 
-### 6.15 Bootstrap & Repo Structure
+### 6.15 Logging & SIEM
+
+| ID | Requirement | Priority |
+|---|---|---|
+| LOG-001 | CloudTrail logs **shall** be shipped to CloudWatch Logs. | Must |
+| LOG-002 | VPC Flow Logs **shall** be shipped to CloudWatch Logs. | Must |
+| LOG-003 | Coder audit logs **shall** be shipped to CloudWatch Logs (via Grafana Agent). | Must |
+| LOG-004 | AI Bridge token usage **shall** be queryable via LiteLLM PostgreSQL + Grafana dashboards. | Must |
+| LOG-005 | Keycloak auth events **shall** be shipped to CloudWatch Logs. | Must |
+| LOG-006 | Amazon OpenSearch Serverless **shall** be deployed as SIEM, ingesting CloudWatch Logs. | Must |
+| LOG-007 | OpenSearch dashboards **should** include: failed logins, API anomalies, network flows, AI usage. | Should |
+
+### 6.16 Bootstrap & Repo Structure
 
 | ID | Requirement | Priority |
 |---|---|---|
@@ -412,10 +432,11 @@ gov.demo.coder.com/
 | SM-001 – 004 | Secrets | AWS Secrets Manager docs |
 | REG-001 – 003 | Registry | ECR docs |
 | OBS-001 – 004 | Observability | ai.coder.com |
-| KC-001 – 013 | Keycloak / SSO | Keycloak docs, OIDC best practices |
+| KC-001 – 016 | Keycloak / SSO | Keycloak docs, OIDC best practices |
 | MESH-001 – 008 | Istio / mTLS | Istio docs, EKS best practices |
-| SEC-001 – 009 | Security | FIPS 140-2/3, DISA STIG |
-| BOOT-001 – 007 | Bootstrap | FluxCD docs |
+| SEC-001 – 013 | Security | FIPS 140-2/3, DISA STIG |
+| LOG-001 – 007 | Logging / SIEM | CloudWatch, OpenSearch Serverless |
+| BOOT-001 – 008 | Bootstrap | FluxCD docs |
 
 ---
 
@@ -435,6 +456,11 @@ gov.demo.coder.com/
 | 10 | Istio | Sidecar mode, mTLS STRICT on Coder/LiteLLM namespaces only. East-west encryption. No traffic management features initially. |
 | 11 | Keycloak | Central SSO, admin-only user provisioning. OIDC for Coder, GitLab, Grafana. All three auto-create users on first login. No self-registration. Shares RDS. `sso.gov.demo.coder.com`. |
 | 12 | Email | Amazon SES, single sender: `noreply@gov.demo.coder.com` for all services (Keycloak, GitLab, Coder if enabled later). Domain verified with SPF/DKIM/DMARC. |
+| 13 | WAF | ALB + AWS WAF (Managed Rules) on all public-facing services. Keycloak `/admin` IP-restricted. No CloudFront needed for demo. |
+| 14 | Passkeys | Keycloak WebAuthn Passwordless Policy enabled. TouchID/FIDO2/YubiKey supported. Required action for new users. |
+| 15 | GitLab SSH | Disabled. HTTPS-only for all Git operations. |
+| 16 | SIEM | CloudWatch Logs → OpenSearch Serverless. Ingests CloudTrail, VPC Flow Logs, Coder audit, Keycloak auth events. |
+| 17 | Shield | Standard only (automatic). No Shield Advanced. |
 
 ---
 
