@@ -217,7 +217,7 @@ The single-region IaC is structured to make this additive, not a rewrite.
 
 | ID | Requirement | Priority |
 |---|---|---|
-| CDR-001 | Coderd **shall** run on EKS via the official Helm chart. | Must |
+| CDR-001 | Coderd **shall** run on EKS via the official Helm chart. **The deployment shall use the latest RC release** to enable Coder Agents (`CODER_EXPERIMENTS=agents`). See [Coder Agents Early Access](https://coder.com/docs/ai-coder/agents/early-access). | Must |
 | CDR-002 | Coderd **shall** be exposed via NLB + ACM TLS at `dev.gov.demo.coder.com`. | Must |
 | CDR-003 | Database: RDS PostgreSQL 15+, multi-AZ, automated backups, 7-day retention. LiteLLM shares the same RDS instance (separate database). | Must |
 | CDR-004 | Auth via GitLab CE OIDC (`gitlab.gov.demo.coder.com`). | Must |
@@ -390,7 +390,10 @@ gov.demo.coder.com/
 | 2 | Bedrock model access | SE enables in console. Instructions at `docs/BEDROCK_SETUP.md`. |
 | 3 | OpenAI + Gemini API keys | SE has keys. Store in AWS Secrets Manager during `2-data` terraform apply. |
 | 4 | GitLab EC2 instance size | `m7a.2xlarge` (8 vCPU / 32 GiB, AMD EPYC). GitLab Omnibus ~8 GB + Docker runner builds get the rest. Runner executes on the same host. ~$0.46/hr on-demand, ~$338/mo. |
-| 5 | Workspace base image | Custom FIPS image built via GitLab CI, pushed to ECR. Base: RHEL 9 UBI or AL2023 with FIPS-validated OpenSSL. |
+| 5 | Workspace base image | Custom FIPS images built via GitLab CI → ECR. RHEL 9 UBI with `crypto-policies FIPS` + validated OpenSSL. Two images: `coder-enterprise-fips` (base) and `coder-desktop-fips` (XFCE + KasmVNC). See `images/` directory. |
+| 6 | LiteLLM spend caps | No spend caps. |
+| 7 | Day-1 templates | `dev-codex` (generic dev + Codex CLI + code-server + mux) and `agents-dev` (Coder Agents — server-side AI, no client-side LLM config). See `templates/` directory. |
+| 8 | Coder version | **Latest RC release** required for Coder Agents feature (`CODER_EXPERIMENTS=agents`). |
 
 ---
 
@@ -398,6 +401,4 @@ gov.demo.coder.com/
 
 | # | Item | Status |
 |---|---|---|
-| 1 | OpenAI + Gemini spend caps — any budget limits to configure in LiteLLM? | Open |
-| 2 | Custom FIPS workspace image — Dockerfile scope (which languages, tools, SDKs?) | Open |
-| 3 | Coder template set — which templates to ship on day 1? | Open |
+| — | All major items resolved. | — |
