@@ -1,4 +1,4 @@
-# gov.demo.coder.com
+# coder4gov.com
 
 GovCloud-flavored demo environment for [Coder](https://coder.com). Single-region
 (us-west-2), multi-AZ, FIPS-enabled, GitOps-controlled via FluxCD.
@@ -36,7 +36,7 @@ GovCloud-flavored demo environment for [Coder](https://coder.com). Single-region
 
 ```mermaid
 graph TB
-    DNS["Route 53<br/>gov.demo.coder.com"]
+    DNS["Route 53<br/>coder4gov.com"]
 
     subgraph VPC["us-west-2 · VPC · multi-AZ"]
         subgraph EKS["EKS: gov-demo"]
@@ -69,7 +69,7 @@ graph TB
 │   ├── REQUIREMENTS.md        # Full requirements (shall statements, traceability)
 │   ├── BEDROCK_SETUP.md       # Enable Claude models in Bedrock console
 │   ├── CODER_FIPS_BUILD.md    # Build Coder binary/image with FIPS 140-3
-│   └── dns-delegation.sh      # gcloud script: delegate gov.demo.coder.com → R53
+│   └── dns-bootstrap.sh      # Verify R53 zone + request ACM wildcard cert
 ├── images/
 │   ├── base-fips/Dockerfile   # RHEL 9 UBI + FIPS crypto + Docker CE
 │   ├── desktop-fips/Dockerfile# base-fips + XFCE + KasmVNC
@@ -94,15 +94,15 @@ graph TB
 
 ## DNS
 
-Base domain: `gov.demo.coder.com` (delegated from Google Cloud DNS → Route 53)
+Base domain: `coder4gov.com` (AWS-registered, Route 53 authoritative)
 
 | Subdomain | Service |
 |---|---|
-| `dev.gov.demo.coder.com` | Coder |
-| `*.dev.gov.demo.coder.com` | Coder workspaces |
-| `gitlab.gov.demo.coder.com` | GitLab CE |
-| `sso.gov.demo.coder.com` | Keycloak SSO |
-| `grafana.dev.gov.demo.coder.com` | Grafana |
+| `dev.coder4gov.com` | Coder |
+| `*.dev.coder4gov.com` | Coder workspaces |
+| `gitlab.coder4gov.com` | GitLab CE |
+| `sso.coder4gov.com` | Keycloak SSO |
+| `grafana.dev.coder4gov.com` | Grafana |
 
 ## AI Models (via LiteLLM)
 
@@ -116,7 +116,7 @@ Base domain: `gov.demo.coder.com` (delegated from Google Cloud DNS → Route 53)
 
 Before starting Terraform:
 
-1. **DNS delegation** — run `docs/dns-delegation.sh` after `1-network` apply
+1. **DNS** — `coder4gov.com` is AWS-registered. Route 53 zone created in `1-network`. No delegation needed.
 2. **Bedrock models** — follow `docs/BEDROCK_SETUP.md` to enable Anthropic models
 3. **API keys** — store OpenAI + Gemini keys in AWS Secrets Manager
 4. **Coder FIPS build** — follow `docs/CODER_FIPS_BUILD.md` to build + push to ECR

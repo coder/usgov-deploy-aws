@@ -1,6 +1,6 @@
 # Gov Demo Environment — Requirements Document
 
-**Project:** gov.demo.coder.com
+**Project:** coder4gov.com
 **Classification:** Unclassified — For Demo/Reference Use
 **Version:** 0.5.0-DRAFT
 **Date:** 2025-03-24
@@ -31,8 +31,8 @@ All requirements use **shall** (mandatory), **should** (recommended), or
 
 | # | Decision | Resolution |
 |---|---|---|
-| 1 | **Domain** | Base: `gov.demo.coder.com`. Subdomains: `dev.` (Coder), `grafana.dev.` (Grafana), `gitlab.` (GitLab), `flux.` (FluxCD UI if added), etc. |
-| 2 | **DNS Delegation** | `demo.coder.com` is owned by Google Cloud DNS. A delegation NS record for `gov.demo.coder.com` shall point to an AWS Route 53 hosted zone. All records below that zone are managed in R53. |
+| 1 | **Domain** | Base: `coder4gov.com`. Registered via AWS. Subdomains: `dev.` (Coder), `grafana.dev.` (Grafana), `gitlab.` (GitLab), `sso.` (Keycloak), etc. |
+| 2 | **DNS** | `coder4gov.com` registered through AWS Route 53. No delegation needed — R53 is authoritative. |
 | 3 | **Coder License** | Premium + AI Add-On, up to 50 users. External provisioners, workspace proxies, and AI Bridge are all available. |
 | 4 | **Bedrock Models** | Claude Sonnet 4.6 (`us.anthropic.claude-sonnet-4-6`), Claude Opus 4.6 (`us.anthropic.claude-opus-4-6-v1`), Claude Haiku 4.5 (`us.anthropic.claude-haiku-4-5-20251001-v1:0`) |
 | 5 | **External Providers** | LiteLLM shall also connect to OpenAI (GPT-4o, o4-mini) and Google Gemini (gemini-2.5-pro) via API key. |
@@ -106,7 +106,7 @@ The single-region IaC is structured to make this additive, not a rewrite.
 
 ```mermaid
 graph TB
-    R53["Route 53: gov.demo.coder.com<br/>dev. → Coder NLB<br/>*.dev. → Coder workspaces<br/>gitlab. → GitLab NLB<br/>sso. → Keycloak NLB<br/>grafana.dev. → Grafana NLB"]
+    R53["Route 53: coder4gov.com<br/>dev. → Coder NLB<br/>*.dev. → Coder workspaces<br/>gitlab. → GitLab NLB<br/>sso. → Keycloak NLB<br/>grafana.dev. → Grafana NLB"]
 
     subgraph REGION["us-west-2 · multi-AZ"]
         subgraph VPC["VPC"]
@@ -163,15 +163,15 @@ graph TB
 | INFRA-003 | All AWS API calls **shall** use FIPS-validated endpoints. | Must |
 | INFRA-004 | All data at rest **shall** be encrypted via KMS (SSE-KMS). | Must |
 | INFRA-005 | All data in transit **shall** use TLS 1.2+. | Must |
-| INFRA-006 | Infrastructure **shall** be Terraform, stored in gov.demo.coder.com. | Must |
+| INFRA-006 | Infrastructure **shall** be Terraform, stored in coder4gov.com. | Must |
 | INFRA-007 | The VPC **shall** use private subnets + AWS NAT Gateway for outbound. | Must |
 | INFRA-008 | The VPC **shall** span ≥2 AZs. | Must |
 | INFRA-009 | Security groups **shall** follow least-privilege. | Must |
-| INFRA-010 | Route 53 **shall** host the `gov.demo.coder.com` zone. Google Cloud DNS for `demo.coder.com` **shall** delegate via NS records. ACM **shall** provision TLS certs. | Must |
+| INFRA-010 | Route 53 **shall** host the `coder4gov.com` zone (AWS-registered domain, no delegation needed). ACM **shall** provision TLS certs. | Must |
 | INFRA-011 | Elastic IPs **should** be allocated for stable ingress. | Should |
 | INFRA-012 | Terraform state **shall** be in S3 + DynamoDB, KMS-encrypted. | Must |
 | INFRA-013 | Amazon SES **shall** be configured in us-west-2 for transactional email (password resets, notifications). | Must |
-| INFRA-014 | The `gov.demo.coder.com` domain **shall** be verified in SES with SPF, DKIM, and DMARC DNS records in Route 53. All services **shall** send from `noreply@gov.demo.coder.com`. | Must |
+| INFRA-014 | The `coder4gov.com` domain **shall** be verified in SES with SPF, DKIM, and DMARC DNS records in Route 53. All services **shall** send from `noreply@coder4gov.com`. | Must |
 
 ### 6.2 EKS Cluster
 
@@ -206,7 +206,7 @@ graph TB
 |---|---|---|
 | FLUX-001 | FluxCD OSS **shall** be the sole GitOps engine. | Must |
 | FLUX-002 | FluxCD **shall** be bootstrapped via Terraform provider targeting GitLab CE. | Must |
-| FLUX-003 | Source-of-truth: gov.demo.coder.com on GitLab CE, path `clusters/gov-demo/`. | Must |
+| FLUX-003 | Source-of-truth: coder4gov.com on GitLab CE, path `clusters/gov-demo/`. | Must |
 | FLUX-004 | Controllers: source, kustomize, helm, notification. | Must |
 | FLUX-005 | Reconciliation interval ≤5 min. | Must |
 | FLUX-006 | `dependsOn` **shall** enforce infra-before-apps. | Must |
@@ -217,9 +217,9 @@ graph TB
 | ID | Requirement | Priority |
 |---|---|---|
 | CDR-001 | Coderd **shall** run on EKS via the official Helm chart. **The deployment shall use the latest RC release** to enable Coder Agents (`CODER_EXPERIMENTS=agents`). See [Coder Agents Early Access](https://coder.com/docs/ai-coder/agents/early-access). | Must |
-| CDR-002 | Coderd **shall** be exposed via ALB + ACM TLS at `dev.gov.demo.coder.com`. with AWS WAF Web ACL attached. | Must |
+| CDR-002 | Coderd **shall** be exposed via ALB + ACM TLS at `dev.coder4gov.com`. with AWS WAF Web ACL attached. | Must |
 | CDR-003 | Database: RDS PostgreSQL 15+, multi-AZ, automated backups, 7-day retention. LiteLLM shares the same RDS instance (separate database). | Must |
-| CDR-004 | Auth via Keycloak OIDC (`sso.gov.demo.coder.com`). | Must |
+| CDR-004 | Auth via Keycloak OIDC (`sso.coder4gov.com`). | Must |
 | CDR-005 | Workspaces **shall** schedule on Karpenter NodePools. | Must |
 | CDR-006 | AI Bridge **shall** be enabled. | Must |
 | CDR-007 | The `coder-observability` chart **shall** be deployed. | Must |
@@ -228,7 +228,7 @@ graph TB
 | CDR-010 | Templates **shall** be stored in GitLab CE, managed via Terraform. | Must |
 | CDR-011 | Templates **should** support both K8s and EC2 workspace types. | Should |
 | CDR-012 | Coder binaries and container images **shall** be built from source with FIPS 140-3 mode enabled (`GOFIPS140=latest`). See `docs/CODER_FIPS_BUILD.md`. | Must |
-| CDR-013 | Path-based workspace apps **shall** be disabled. Only wildcard subdomain routing (`*.dev.gov.demo.coder.com`) **shall** be used. | Must |
+| CDR-013 | Path-based workspace apps **shall** be disabled. Only wildcard subdomain routing (`*.dev.coder4gov.com`) **shall** be used. | Must |
 | CDR-014 | HSTS **shall** be enabled on the Coder ALB/Ingress. | Must |
 | CDR-015 | Connection Logs (Premium) **shall** be enabled for all workspace agent connections. | Must |
 | CDR-016 | Agent Boundaries **shall** be enabled on AI templates to restrict/audit agent network access. | Must |
@@ -268,7 +268,7 @@ graph TB
 | GL-002 | EC2 **shall** run AL2023 or RHEL 9 with FIPS kernel. | Must |
 | GL-003 | Bundled PostgreSQL and Redis (single-instance demo). | Must |
 | GL-004 | S3 for object storage (LFS, artifacts, backups). | Must |
-| GL-005 | ALB + ACM TLS at `gitlab.gov.demo.coder.com` with AWS WAF Web ACL. | Must |
+| GL-005 | ALB + ACM TLS at `gitlab.coder4gov.com` with AWS WAF Web ACL. | Must |
 | GL-006 | Git source-of-truth for FluxCD + Coder templates. | Must |
 | GL-007 | GitLab **shall** authenticate users via Keycloak OIDC (replacing local username/password). | Must |
 | GL-008 | Daily backups to S3, 30-day retention. | Must |
@@ -278,7 +278,7 @@ graph TB
 | GL-012 | K8s-based runner on EKS **may** be added later. | May |
 | GL-013 | Host OS **should** be STIG-hardened (best-effort). | Should |
 | GL-014 | ASG (min 1, max 1) **should** provide self-healing. | Should |
-| GL-015 | GitLab **shall** use Amazon SES as its SMTP relay for notification emails (`noreply@gov.demo.coder.com`). | Must |
+| GL-015 | GitLab **shall** use Amazon SES as its SMTP relay for notification emails (`noreply@coder4gov.com`). | Must |
 | GL-016 | GitLab SSH **shall** be disabled. All Git operations **shall** use HTTPS only. | Must |
 
 ### 6.9 Secrets Management
@@ -306,7 +306,7 @@ graph TB
 | OBS-001 | `coder-observability` chart **shall** be deployed. | Must |
 | OBS-002 | Loki **shall** use S3 for log storage. | Must |
 | OBS-003 | Grafana Agent **shall** run as DaemonSet on all nodes. | Must |
-| OBS-004 | Grafana **should** be exposed via NLB + TLS at `grafana.dev.gov.demo.coder.com`. | Should |
+| OBS-004 | Grafana **should** be exposed via NLB + TLS at `grafana.dev.coder4gov.com`. | Should |
 | OBS-005 | Grafana **should** authenticate users via Keycloak OIDC. | Should |
 
 ### 6.12 Keycloak (SSO / Identity Provider)
@@ -315,7 +315,7 @@ graph TB
 |---|---|---|
 | KC-001 | Keycloak **shall** be deployed on EKS via the Bitnami Helm chart, managed by FluxCD. | Must |
 | KC-002 | Keycloak **shall** use the shared RDS instance (separate database). | Must |
-| KC-003 | Keycloak **shall** be exposed via ALB + ACM TLS at `sso.gov.demo.coder.com` with WAF. `/admin` path **shall** be IP-restricted via WAF rule. | Must |
+| KC-003 | Keycloak **shall** be exposed via ALB + ACM TLS at `sso.coder4gov.com` with WAF. `/admin` path **shall** be IP-restricted via WAF rule. | Must |
 | KC-004 | A single realm (`gov-demo`) **shall** be configured with OIDC clients for: Coder, GitLab, Grafana. | Must |
 | KC-005 | Users **shall** be managed locally in Keycloak (no LDAP/AD for demo). | Must |
 | KC-006 | Self-service registration **shall** be disabled. User provisioning is admin-only via Keycloak admin console. | Must |
@@ -325,7 +325,7 @@ graph TB
 | KC-010 | Coder **shall** auto-create users on first OIDC login from Keycloak. | Must |
 | KC-011 | GitLab **shall** auto-create users on first OIDC login (`allow_single_sign_on`). | Must |
 | KC-012 | Grafana **shall** auto-create users on first OIDC login (`auto_login = true`). | Should |
-| KC-013 | Keycloak **shall** use Amazon SES as its SMTP provider for password reset and verification emails (`noreply@gov.demo.coder.com`). | Must |
+| KC-013 | Keycloak **shall** use Amazon SES as its SMTP provider for password reset and verification emails (`noreply@coder4gov.com`). | Must |
 | KC-014 | Keycloak **shall** enable brute force detection (lock after 5 failed attempts, 5-min lockout). | Must |
 | KC-015 | Keycloak **shall** enable WebAuthn/Passkeys (Authentication → Policies → WebAuthn Passwordless Policy) for TouchID/FIDO2 MFA. | Must |
 | KC-016 | Passkey registration **shall** be a required action for new users. | Must |
@@ -382,7 +382,7 @@ graph TB
 | BOOT-003 | Repo structure: | Must |
 
 ```
-gov.demo.coder.com/
+coder4gov.com/
 ├── docs/
 │   └── REQUIREMENTS.md
 ├── infra/
@@ -450,7 +450,7 @@ gov.demo.coder.com/
 
 | # | Item | Resolution |
 |---|---|---|
-| 1 | DNS delegation | SE owns this. Script at `docs/dns-delegation.sh`. Run after `1-network` terraform apply. |
+| 1 | DNS | `coder4gov.com` registered through AWS. Route 53 is authoritative. No delegation script needed. |
 | 2 | Bedrock model access | SE enables in console. Instructions at `docs/BEDROCK_SETUP.md`. |
 | 3 | OpenAI + Gemini API keys | SE has keys. Store in AWS Secrets Manager during `2-data` terraform apply. |
 | 4 | GitLab EC2 instance size | `m7a.2xlarge` (8 vCPU / 32 GiB, AMD EPYC). GitLab Omnibus ~8 GB + Docker runner builds get the rest. Runner executes on the same host. ~$0.46/hr on-demand, ~$338/mo. |
@@ -460,9 +460,9 @@ gov.demo.coder.com/
 | 8 | Coder version | **Latest RC release** required for Coder Agents feature (`CODER_EXPERIMENTS=agents`). |
 | 9 | Coder FIPS build | Build Coder from source with `GOFIPS140=latest` (Go 1.24+ native FIPS 140-3). No cgo/BoringSSL needed. See `docs/CODER_FIPS_BUILD.md`. |
 | 10 | Istio | Sidecar mode, mTLS STRICT on Coder/LiteLLM namespaces only. East-west encryption. No traffic management features initially. |
-| 11 | Keycloak | Central SSO, admin-only user provisioning. OIDC for Coder, GitLab, Grafana. All three auto-create users on first login. No self-registration. Shares RDS. `sso.gov.demo.coder.com`. |
-| 12 | Email | Amazon SES, single sender: `noreply@gov.demo.coder.com` for all services (Keycloak, GitLab, Coder if enabled later). Domain verified with SPF/DKIM/DMARC. |
-| 13 | WAF | ALB + AWS WAF (Managed Rules). ALB supports wildcard subdomain routing for Coder (`*.dev.gov.demo.coder.com`). Keycloak `/admin` IP-restricted. No CloudFront. |
+| 11 | Keycloak | Central SSO, admin-only user provisioning. OIDC for Coder, GitLab, Grafana. All three auto-create users on first login. No self-registration. Shares RDS. `sso.coder4gov.com`. |
+| 12 | Email | Amazon SES, single sender: `noreply@coder4gov.com` for all services (Keycloak, GitLab, Coder if enabled later). Domain verified with SPF/DKIM/DMARC. |
+| 13 | WAF | ALB + AWS WAF (Managed Rules). ALB supports wildcard subdomain routing for Coder (`*.dev.coder4gov.com`). Keycloak `/admin` IP-restricted. No CloudFront. |
 | 14 | Passkeys | Keycloak WebAuthn Passwordless Policy enabled. TouchID/FIDO2/YubiKey supported. Required action for new users. |
 | 15 | GitLab SSH | Disabled. HTTPS-only for all Git operations. |
 | 16 | SIEM | CloudWatch Logs → OpenSearch Serverless. Ingests CloudTrail, VPC Flow Logs, Coder audit, Keycloak auth events. |
