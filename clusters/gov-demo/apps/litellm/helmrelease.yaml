@@ -52,7 +52,7 @@ spec:
     # AI-009, AI-010: Model routing configuration
     config:
       model_list:
-        # Bedrock models – authenticated via IRSA (no API key needed)
+        # ─── AWS Bedrock (Claude) – authenticated via IRSA ───
         - model_name: "claude-sonnet"
           litellm_params:
             model: "bedrock/us.anthropic.claude-sonnet-4-6"
@@ -62,17 +62,27 @@ spec:
         - model_name: "claude-haiku"
           litellm_params:
             model: "bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0"
-        # OpenAI models – key from ExternalSecret litellm-api-keys
-        - model_name: "gpt-4o"
+        # ─── OpenAI (direct API) – key from ExternalSecret ───
+        - model_name: "gpt-5.4"
           litellm_params:
-            model: "openai/gpt-4o"
+            model: "openai/gpt-5.4"
             api_key_env: "OPENAI_API_KEY"
-        - model_name: "o4-mini"
+        - model_name: "gpt-5.3-codex"
           litellm_params:
-            model: "openai/o4-mini"
+            model: "openai/gpt-5.3-codex"
             api_key_env: "OPENAI_API_KEY"
-        # Gemini model – key from ExternalSecret litellm-api-keys
-        - model_name: "gemini-2.5-pro"
+        - model_name: "gpt-5.4-mini"
           litellm_params:
-            model: "gemini/gemini-2.5-pro"
+            model: "openai/gpt-5.4-mini"
+            api_key_env: "OPENAI_API_KEY"
+        # ─── Google Vertex AI (Gemini) – key from ExternalSecret ───
+        # Using Gemini API directly; switch to vertex_ai/ prefix if
+        # Vertex AI with Workload Identity Federation is configured.
+        - model_name: "gemini-3.1-pro"
+          litellm_params:
+            model: "gemini/gemini-3.1-pro-preview"
+            api_key_env: "GEMINI_API_KEY"
+        - model_name: "gemini-3-flash"
+          litellm_params:
+            model: "gemini/gemini-3-flash-preview"
             api_key_env: "GEMINI_API_KEY"
