@@ -1,27 +1,75 @@
-# GovCloud Demo Environment — Requirements Document
+# Gov Demo Environment — Requirements Document
 
 **Project:** gov.demo.coder.com
 **Classification:** Unclassified — For Demo/Reference Use
-**Version:** 0.1.0-DRAFT
+**Version:** 0.2.0-DRAFT
 **Date:** 2025-03-24
 
 ---
 
 ## 1. Purpose
 
-This document defines the requirements for a GovCloud-hosted demonstration
-environment that mimics a sensitive government customer deployment. The
-environment shall be GitOps-controlled, FIPS-enabled, and deploy a standard
-developer-platform tool chain centered on Coder.
+This document defines the requirements for a demonstration environment that
+mimics a sensitive government customer deployment. The environment is
+GitOps-controlled, FIPS-enabled, and deploys a lean developer-platform tool
+chain centered on Coder.
+
+The environment deploys to **AWS commercial** (us-east-1 or us-west-2) by
+default. All region-specific configuration is parameterized so the stack can be
+repointed to **AWS GovCloud** (us-gov-west-1) with a variable change — no IaC
+refactoring required.
+
+This is a **one-SE-maintainable** environment. Scope is deliberately minimal:
+only the tools needed to demo Coder + AI in a gov-flavored context. Anything
+that doesn't directly serve a demo narrative is deferred.
 
 All requirements use **shall** (mandatory), **should** (recommended), or
 **may** (optional) language per RFC 2119 to enable traceability.
 
 ---
 
-## 2. Trade Studies
+## 2. Scope Decisions
 
-### 2.1 GitOps Engine — FluxCD vs ArgoCD
+### 2.1 What's In
+
+| Component | Where | Why |
+|---|---|---|
+| **Coder** (server + provisioners) | EKS | The product being demoed |
+| **Karpenter** | EKS | Workspace node scaling (per ai.coder.com) |
+| **LiteLLM + AI Bridge** | EKS | AI coding demo hook |
+| **FluxCD** | EKS | GitOps — low maintenance once bootstrapped |
+| **GitLab CE** (Omnibus) | EC2 | Git source-of-truth, OIDC provider for Coder, CI runner host |
+| **coder-observability** | EKS | One Helm chart → Prometheus + Grafana + Loki, pre-wired dashboards |
+| **External Secrets Operator** | EKS | Bridges AWS Secrets Manager into K8s Secrets for FluxCD |
+
+### 2.2 What's Cut (and the replacement)
+
+| Cut | Replaced By | Rationale |
+|---|---|---|
+| Vault | **AWS Secrets Manager** + External Secrets Operator | Zero ops — no unsealing, no Raft, no policy authoring |
+| Keycloak | **GitLab CE built-in OIDC** | GitLab can act as an OIDC provider for Coder directly |
+| Harbor | **Amazon ECR** | Native to AWS, no maintenance, FIPS endpoints available |
+| Nexus OSS | **Deferred** | Only needed if artifact proxying is part of a specific demo |
+| Standalone Prom/Grafana/Loki | **coder-observability chart** | Single Helm release, pre-built Coder dashboards |
+
+### 2.3 GovCloud Portability
+
+The following items are parameterized to enable a GovCloud pivot:
+
+| Parameter | Commercial Default | GovCloud Override |
+|---|---|---|
+| `aws_region` | `us-east-1` | `us-gov-west-1` |
+| `aws_partition` | `aws` | `aws-us-gov` |
+| `use_fips_endpoints` | `true` | `true` |
+| `ami_type` | Bottlerocket FIPS | Bottlerocket FIPS |
+| `acm_domain` | `gov.demo.coder.com` | same or customer domain |
+| `ecr_registry` | `<account>.dkr.ecr.us-east-1.amazonaws.com` | `<account>.dkr.ecr.us-gov-west-1.amazonaws.com` |
+
+No code changes — only `terraform.tfvars` changes.
+
+---
+
+## 3. Trade Study: FluxCD vs ArgoCD
 
 | Criterion | FluxCD | ArgoCD |
 |---|---|---|
@@ -29,352 +77,244 @@ All requirements use **shall** (mandatory), **should** (recommended), or
 | FIPS / compliance fit | Security-first, no external credential exposure | Requires extra hardening for dashboard |
 | Modularity | Controller-per-concern (Source, Kustomize, Helm, Notification) | Monolithic install with optional components |
 | Git-native RBAC | Inherits Git provider permissions — ideal with self-hosted GitLab | Separate RBAC system in-cluster |
-| Multi-cluster | Hub-spoke via Flux-in-management-cluster pattern | Native multi-cluster, heavier footprint |
-| UI / Visibility | CLI-only (Devtron or Weave GitOps dashboards optional add-on) | Rich built-in Web UI |
+| Maintenance burden | Low — set and forget after bootstrap | Medium — UI, Redis, app-of-apps pattern |
 | Bootstrap | `flux bootstrap` CLI or Terraform provider | `kubectl apply` + ArgoCD CLI |
 
 **Decision: FluxCD**
 
 Rationale:
-- FluxCD's modular, pull-based architecture is a better fit for security-
-  sensitive environments where minimizing attack surface matters.
-- Git-native RBAC aligns with the self-hosted GitLab instance that will serve
-  as the source-of-truth, keeping access decisions in one place.
-- The Flux Terraform provider enables bootstrap-as-code, which pairs well with
-  the Terraform-centric IaC approach taken by ai.coder.com.
-- ControlPlane Enterprise for FluxCD is available directly from AWS Marketplace
-  for EKS, simplifying procurement in GovCloud.
-
-### 2.2 GitLab CE — EKS vs EC2
-
-| Criterion | EKS (Helm chart) | EC2 (Omnibus) |
-|---|---|---|
-| Operational complexity | High — multi-component chart (Webservice, Sidekiq, Gitaly, Registry, etc.), requires RDS + ElastiCache + EFS/S3 | Low — single-binary "omnibus" install on one or more instances |
-| FIPS enablement | Requires FIPS-compiled container images for every sub-component; GitLab CE does not ship official FIPS images | GitLab Omnibus on RHEL/AL2023 with FIPS-enabled kernel — well-documented path |
-| STIG applicability | No published CIS/STIG for GitLab-on-K8s | RHEL 9 / AL2023 STIG baselines apply directly to host OS |
-| Scaling model | Horizontal pod autoscaling per component | Vertical + ASG horizontal (Omnibus supports multi-node reference arch) |
-| Backup / DR | Complex — distributed state across PVCs, RDS, S3 | Straightforward — `gitlab-backup create` to S3 |
-| Community support | Helm chart is community-maintained; EKS-specific docs are thin | GitLab's own AWS reference architecture targets EC2+RDS+ElastiCache |
-
-**Decision: EC2 (Omnibus)**
-
-Rationale:
-- GitLab's own reference architecture for AWS uses EC2 with RDS and
-  ElastiCache, and this is the path with the most complete documentation.
-- FIPS enablement on the host OS (RHEL 9 or Amazon Linux 2023 in FIPS mode) is
-  well-understood and does not require custom container image builds.
-- STIG compliance maps directly to the host OS baseline (RHEL 9 STIG) rather
-  than requiring a Kubernetes-specific hardening guide.
-- For a demo environment, the operational simplicity of Omnibus outweighs the
-  scaling benefits of Kubernetes.
-
-### 2.3 Nexus Repository OSS — EKS vs EC2
-
-| Criterion | EKS (Helm chart) | EC2 (Docker / standalone) |
-|---|---|---|
-| Official support | Sonatype provides Helm charts, but HA charts target Pro only; CE is "manually adjusted" | Standalone install (Java) or Docker — fully supported for CE |
-| Storage | Requires EFS CSI driver for cross-AZ persistence; S3 blobstore available | EBS volume + S3 sync for backup — simpler |
-| Resource requirements | Min 4 CPU / 8 GB per pod; needs EFS, ALB controller, CSI drivers | Same compute, but no K8s overhead |
-| FIPS | Same container-level FIPS concerns as GitLab | Host-OS FIPS mode covers all crypto |
-| Resilience | K8s self-healing, but CE is single-replica only | ASG with health checks + EBS snapshot restore |
-| Complexity | Moderate — Helm + EFS + ALB + PVC management | Low — Docker Compose or systemd on EC2 |
-
-**Decision: EC2**
-
-Rationale:
-- Nexus CE is inherently single-instance (no HA clustering) so Kubernetes
-  orchestration provides minimal benefit for resilience.
-- Sonatype's own HA/resilience Helm chart targets Pro; CE would require manual
-  chart modifications.
-- EC2 with Docker Compose behind an NLB is operationally simpler and aligns
-  with the GitLab EC2 deployment, reducing the number of distinct operational
-  patterns.
-- FIPS enablement on the host OS is straightforward.
-
----
-
-## 3. Recommended Additional Tools
-
-Based on typical government customer integration points:
-
-| Tool | Purpose | Deployment Target | Rationale |
-|---|---|---|---|
-| **HashiCorp Vault (OSS)** | Secrets management, PKI, dynamic credentials | EKS (Helm) | Central secrets management for all services; Vault Agent injector integrates natively with K8s workloads and Coder templates; FIPS-capable builds available |
-| **Keycloak** | Identity Provider / SSO (SAML 2.0, OIDC) | EKS (Helm) | Gov customers typically require a centralized IdP; Keycloak federates to PIV/CAC via X.509, integrates with GitLab/Coder/Nexus/Vault; FIPS-capable with BouncyCastle FIPS provider |
-| **Harbor** | Container registry with vulnerability scanning | EKS (Helm) | Provides Trivy-based image scanning, RBAC, and replication — critical for supply chain security in gov; complements Nexus (which handles language-level artifacts) |
-| **Prometheus + Grafana + Loki** | Observability stack | EKS (Helm) | Consistent with the ai.coder.com reference architecture; Coder ships a purpose-built `coder-observability` chart |
-| **External Secrets Operator** | Bridge between Vault and K8s Secrets | EKS (Helm) | Eliminates manual secret management in GitOps manifests |
+- Minimal attack surface and maintenance burden — critical for a one-SE env.
+- Flux Terraform provider enables bootstrap-as-code alongside the EKS cluster.
+- Git-native RBAC aligns with GitLab as source-of-truth.
+- ControlPlane Enterprise for FluxCD available on AWS Marketplace if needed later.
 
 ---
 
 ## 4. Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                     AWS GovCloud (us-gov-west-1)                    │
-│                                                                     │
-│  ┌──────────────────────────────────────────────────────────────┐   │
-│  │                         VPC                                  │   │
-│  │                                                              │   │
-│  │  ┌─────────────────────────────────────────────────────┐     │   │
-│  │  │              EKS Cluster (FIPS-enabled)              │     │   │
-│  │  │                                                     │     │   │
-│  │  │  ┌──────────┐ ┌──────────┐ ┌──────────────────┐    │     │   │
-│  │  │  │  Coder   │ │ LiteLLM  │ │   FluxCD         │    │     │   │
-│  │  │  │  Server  │ │ (AI GW)  │ │   Controllers    │    │     │   │
-│  │  │  └──────────┘ └──────────┘ └──────────────────┘    │     │   │
-│  │  │  ┌──────────┐ ┌──────────┐ ┌──────────────────┐    │     │   │
-│  │  │  │  Vault   │ │ Keycloak │ │   Harbor          │    │     │   │
-│  │  │  └──────────┘ └──────────┘ └──────────────────┘    │     │   │
-│  │  │  ┌──────────┐ ┌──────────┐ ┌──────────────────┐    │     │   │
-│  │  │  │ ExtSecrets│ │Prometheus│ │ Grafana + Loki   │    │     │   │
-│  │  │  └──────────┘ └──────────┘ └──────────────────┘    │     │   │
-│  │  │  ┌────────────────────────────────────────────┐    │     │   │
-│  │  │  │       Karpenter (Workspace Node Scaling)    │    │     │   │
-│  │  │  └────────────────────────────────────────────┘    │     │   │
-│  │  └─────────────────────────────────────────────────────┘     │   │
-│  │                                                              │   │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌────────────────┐     │   │
-│  │  │  GitLab CE   │  │  Nexus OSS   │  │   RDS (PG 15)  │     │   │
-│  │  │  (EC2/ASG)   │  │  (EC2/ASG)   │  │  Coder + Vault │     │   │
-│  │  └──────────────┘  └──────────────┘  └────────────────┘     │   │
-│  │                                                              │   │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌────────────────┐     │   │
-│  │  │ ElastiCache  │  │   S3         │  │    KMS          │     │   │
-│  │  │ (Redis/GL)   │  │ (artifacts,  │  │ (FIPS 140-3 L3)│     │   │
-│  │  └──────────────┘  │  logs, Loki) │  └────────────────┘     │   │
-│  │                    └──────────────┘                          │   │
-│  └──────────────────────────────────────────────────────────────┘   │
-│                                                                     │
-│  ┌──────────────────────────────────────────────────────────────┐   │
-│  │  GitOps Flow:  GitLab CE ──► FluxCD ──► EKS Cluster         │   │
-│  │                GitLab CE ──► FluxCD ──► EC2 (via Terraform)  │   │
-│  └──────────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────┐
+│              AWS Commercial (us-east-1) [GovCloud-portable]   │
+│                                                               │
+│  ┌─────────────────────────────────────────────────────────┐  │
+│  │                          VPC                             │  │
+│  │                                                         │  │
+│  │  ┌───────────────────────────────────────────────────┐  │  │
+│  │  │            EKS Cluster (FIPS-enabled)              │  │  │
+│  │  │                                                   │  │  │
+│  │  │  ┌───────────┐ ┌───────────┐ ┌────────────────┐  │  │  │
+│  │  │  │  Coder    │ │  LiteLLM  │ │  FluxCD        │  │  │  │
+│  │  │  │  Server   │ │  (AI GW)  │ │  Controllers   │  │  │  │
+│  │  │  └───────────┘ └───────────┘ └────────────────┘  │  │  │
+│  │  │  ┌───────────┐ ┌───────────┐ ┌────────────────┐  │  │  │
+│  │  │  │ ExtSecrets│ │ Prom/Graf │ │  Loki          │  │  │  │
+│  │  │  │ Operator  │ │ /Loki     │ │  (S3 backend)  │  │  │  │
+│  │  │  └───────────┘ └───────────┘ └────────────────┘  │  │  │
+│  │  │  ┌─────────────────────────────────────────────┐  │  │  │
+│  │  │  │     Karpenter (Workspace Node Scaling)       │  │  │  │
+│  │  │  └─────────────────────────────────────────────┘  │  │  │
+│  │  └───────────────────────────────────────────────────┘  │  │
+│  │                                                         │  │
+│  │  ┌──────────────┐  ┌────────────┐  ┌────────────────┐  │  │
+│  │  │  GitLab CE   │  │ RDS PG 15  │  │  ECR           │  │  │
+│  │  │  (EC2)       │  │ (Coder DB) │  │  (images)      │  │  │
+│  │  └──────────────┘  └────────────┘  └────────────────┘  │  │
+│  │                                                         │  │
+│  │  ┌──────────────┐  ┌────────────┐  ┌────────────────┐  │  │
+│  │  │ Secrets Mgr  │  │  S3        │  │  KMS           │  │  │
+│  │  │              │  │ (logs,     │  │ (FIPS 140-3)   │  │  │
+│  │  └──────────────┘  │  backups)  │  └────────────────┘  │  │
+│  │                    └────────────┘                       │  │
+│  └─────────────────────────────────────────────────────────┘  │
+│                                                               │
+│  GitOps:  GitLab CE ──► FluxCD ──► EKS Cluster               │
+└───────────────────────────────────────────────────────────────┘
 ```
+
+**Total things to keep alive:** EKS cluster (4 Helm charts) + 1 EC2 instance (GitLab) + managed AWS services.
 
 ---
 
 ## 5. Requirements
 
-### 5.1 Infrastructure — AWS GovCloud
+### 5.1 Infrastructure — AWS
 
 | ID | Requirement | Priority | Notes |
 |---|---|---|---|
-| INFRA-001 | The environment **shall** be deployed entirely within AWS GovCloud (us-gov-west-1 or us-gov-east-1). | Must | FedRAMP High baseline region |
-| INFRA-002 | All AWS API calls **shall** use FIPS-validated endpoints (via `AWS_USE_FIPS_ENDPOINT=true`). | Must | FIPS 140-3 endpoints per AWS compliance page |
-| INFRA-003 | All data at rest **shall** be encrypted using AWS KMS with FIPS 140-3 Level 3 validated HSMs (SSE-KMS). | Must | Applies to S3, EBS, RDS, ElastiCache |
-| INFRA-004 | All data in transit **shall** use TLS 1.2 or higher with FIPS-validated cryptographic modules. | Must | |
-| INFRA-005 | Infrastructure **shall** be defined as code using Terraform, stored in the gov.demo.coder.com Git repository. | Must | |
-| INFRA-006 | The VPC **shall** use private subnets for all compute workloads with NAT gateway (or fck-nat equivalent) for outbound internet access. | Must | Reference ai.coder.com pattern |
-| INFRA-007 | The VPC **should** implement at least 2 Availability Zones for all stateful services. | Should | |
-| INFRA-008 | All EC2 instances **shall** use Bottlerocket FIPS AMIs or RHEL 9 / Amazon Linux 2023 with FIPS mode enabled at the kernel level. | Must | Bottlerocket FIPS AMIs now available for EKS managed node groups |
-| INFRA-009 | All EC2 instances hosting GitLab or Nexus **should** be hardened per applicable DISA STIG (RHEL 9 STIG). | Should | User preference: best-effort, not blocking |
-| INFRA-010 | All security groups **shall** follow least-privilege rules — only required ports open, source-scoped to VPC CIDR or specific SGs. | Must | |
-| INFRA-011 | The environment **shall** use Route 53 for DNS management with ACM-provisioned TLS certificates. | Must | |
-| INFRA-012 | The environment **shall** allocate Elastic IPs for stable ingress endpoints (Coder, Grafana, GitLab). | Should | |
+| INFRA-001 | The environment **shall** deploy to AWS commercial by default (us-east-1 or us-west-2). | Must | |
+| INFRA-002 | All region-specific configuration (region, partition, AMI IDs, endpoint URLs) **shall** be parameterized to enable redeployment to AWS GovCloud with only variable changes. | Must | |
+| INFRA-003 | All AWS API calls **shall** use FIPS-validated endpoints (`AWS_USE_FIPS_ENDPOINT=true`). | Must | Available in commercial us-east/west regions |
+| INFRA-004 | All data at rest **shall** be encrypted using AWS KMS (SSE-KMS). | Must | KMS HSMs are FIPS 140-3 L3 certified in all regions |
+| INFRA-005 | All data in transit **shall** use TLS 1.2+ with FIPS-validated cryptographic modules. | Must | |
+| INFRA-006 | Infrastructure **shall** be defined as code using Terraform, stored in the gov.demo.coder.com repository. | Must | |
+| INFRA-007 | The VPC **shall** use private subnets for all compute with NAT (fck-nat or AWS NAT GW) for outbound. | Must | Per ai.coder.com pattern |
+| INFRA-008 | The VPC **shall** span at least 2 Availability Zones. | Must | |
+| INFRA-009 | All security groups **shall** follow least-privilege — only required ports, source-scoped to VPC CIDR or specific SGs. | Must | |
+| INFRA-010 | Route 53 **shall** be used for DNS with ACM-provisioned TLS certificates. | Must | |
+| INFRA-011 | Elastic IPs **should** be allocated for stable ingress (Coder, GitLab, Grafana). | Should | |
+| INFRA-012 | Terraform state **shall** be stored in S3 with DynamoDB locking, encrypted via KMS. | Must | |
 
 ### 5.2 EKS Cluster
 
 | ID | Requirement | Priority | Notes |
 |---|---|---|---|
-| EKS-001 | The EKS cluster **shall** run Kubernetes 1.30+ with the EKS-optimized AMI. | Must | |
-| EKS-002 | EKS worker nodes **shall** use Bottlerocket FIPS AMIs for managed node groups. | Must | Per AWS announcement: FIPS 140-3 validated crypto modules, FIPS endpoints by default |
-| EKS-003 | The EKS cluster **shall** enable the following managed add-ons: CoreDNS, kube-proxy, vpc-cni, EBS CSI driver. | Must | |
-| EKS-004 | The cluster API server endpoint **shall** be private-only or dual (private + restricted public). Public access, if enabled, **shall** be restricted to known CIDR blocks. | Must | |
-| EKS-005 | All IAM integration **shall** use IRSA (IAM Roles for Service Accounts) via the cluster's OIDC provider. | Must | No long-lived IAM access keys in-cluster |
-| EKS-006 | EKS audit logging **shall** be enabled and shipped to CloudWatch Logs (api, audit, authenticator, controllerManager, scheduler). | Must | |
-| EKS-007 | The cluster **shall** include a "system" managed node group for platform workloads (FluxCD, Karpenter, Vault, monitoring). | Must | |
-| EKS-008 | The default StorageClass **shall** be EBS CSI gp3, encrypted, with `WaitForFirstConsumer` binding. | Must | Per ai.coder.com pattern |
+| EKS-001 | The EKS cluster **shall** run Kubernetes 1.30+. | Must | |
+| EKS-002 | EKS managed node group **shall** use Bottlerocket FIPS AMIs. | Must | FIPS 140-3 validated crypto, FIPS endpoints by default |
+| EKS-003 | Managed add-ons **shall** include: CoreDNS, kube-proxy, vpc-cni, EBS CSI driver. | Must | |
+| EKS-004 | The API server endpoint **shall** be private-only or dual with public access restricted to known CIDRs. | Must | |
+| EKS-005 | All workload IAM **shall** use IRSA via the cluster OIDC provider. No static IAM keys in-cluster. | Must | |
+| EKS-006 | Audit logging **shall** be enabled (api, audit, authenticator, controllerManager, scheduler) → CloudWatch. | Must | |
+| EKS-007 | A "system" managed node group **shall** run platform workloads (FluxCD, Karpenter, monitoring). | Must | |
+| EKS-008 | Default StorageClass **shall** be EBS CSI gp3, encrypted, `WaitForFirstConsumer`. | Must | |
 
-### 5.3 Karpenter (Workspace Scaling)
-
-| ID | Requirement | Priority | Notes |
-|---|---|---|---|
-| KARP-001 | Karpenter **shall** be deployed via Helm into a dedicated `karpenter` namespace with 2 replicas spread across AZs. | Must | Per ai.coder.com reference |
-| KARP-002 | Karpenter controller pods **shall** be pinned to the system managed node group via node affinity. | Must | Prevent self-eviction loop |
-| KARP-003 | At least one EC2NodeClass **shall** be defined for Coder workspace nodes with ≥200 GiB gp3 root volumes. | Must | ai.coder.com uses 500 GiB |
-| KARP-004 | At least one NodePool **shall** be defined supporting both spot and on-demand capacity types. | Must | Cost optimization |
-| KARP-005 | Spot termination handling **shall** be enabled (SQS interruption queue + EventBridge rules). | Must | |
-| KARP-006 | NodePools **should** define a consolidation policy of `WhenEmpty` with a configurable TTL. | Should | |
-| KARP-007 | An image-prefetch DaemonSet **should** be deployed to warm workspace base images on Karpenter-provisioned nodes. | Should | Per ai.coder.com pattern |
-| KARP-008 | EC2NodeClass **shall** use subnet and security group discovery via tags (`karpenter.sh/discovery`). | Must | |
-
-### 5.4 FluxCD (GitOps)
+### 5.3 Karpenter
 
 | ID | Requirement | Priority | Notes |
 |---|---|---|---|
-| FLUX-001 | FluxCD **shall** be the sole GitOps engine for the environment. | Must | Per trade study §2.1 |
-| FLUX-002 | FluxCD **shall** be bootstrapped via the Flux Terraform provider or `flux bootstrap` CLI targeting the self-hosted GitLab CE instance. | Must | |
-| FLUX-003 | The FluxCD source repository **shall** be the gov.demo.coder.com repository hosted on the self-hosted GitLab CE. | Must | After initial bootstrap, migrate source from GitHub to GitLab |
-| FLUX-004 | FluxCD **shall** deploy the following controllers: source-controller, kustomize-controller, helm-controller, notification-controller. | Must | |
-| FLUX-005 | All Flux Kustomizations **shall** use a structured directory layout: `clusters/<cluster-name>/`, `infrastructure/`, `apps/`. | Must | Flux recommended repo structure |
-| FLUX-006 | Flux **shall** reconcile at an interval no greater than 5 minutes. | Must | |
-| FLUX-007 | Flux **should** be configured with health checks and dependency ordering (`dependsOn`) for infrastructure-before-apps sequencing. | Should | |
-| FLUX-008 | Flux **shall** use SSH key-based authentication to the GitLab repository with keys stored as Kubernetes Secrets. | Must | |
-| FLUX-009 | Flux notifications **should** be configured to send reconciliation status to a Slack/webhook endpoint. | Should | |
-| FLUX-010 | The initial bootstrapping of FluxCD onto the EKS cluster **shall** be automated as part of the Terraform infrastructure code. | Must | |
+| KARP-001 | Karpenter **shall** be deployed via Helm into `karpenter` namespace, 2 replicas across AZs. | Must | Per ai.coder.com |
+| KARP-002 | Karpenter controller pods **shall** be pinned to the system node group via node affinity. | Must | |
+| KARP-003 | At least one EC2NodeClass **shall** be defined for workspace nodes (≥200 GiB gp3 root). | Must | |
+| KARP-004 | At least one NodePool **shall** support spot + on-demand capacity types. | Must | |
+| KARP-005 | Spot termination handling **shall** be enabled (SQS + EventBridge). | Must | |
+| KARP-006 | NodePools **should** use `WhenEmpty` consolidation with configurable TTL. | Should | |
+| KARP-007 | An image-prefetch DaemonSet **should** warm workspace base images on new nodes. | Should | |
+| KARP-008 | EC2NodeClass **shall** discover subnets/SGs via `karpenter.sh/discovery` tags. | Must | |
+
+### 5.4 FluxCD
+
+| ID | Requirement | Priority | Notes |
+|---|---|---|---|
+| FLUX-001 | FluxCD **shall** be the sole GitOps engine. | Must | |
+| FLUX-002 | FluxCD **shall** be bootstrapped via the Flux Terraform provider targeting the GitLab CE instance. | Must | |
+| FLUX-003 | The source-of-truth repository **shall** be gov.demo.coder.com on the self-hosted GitLab CE. | Must | Initial bootstrap from GitHub, then migrate source |
+| FLUX-004 | Controllers **shall** include: source-controller, kustomize-controller, helm-controller, notification-controller. | Must | |
+| FLUX-005 | Kustomizations **shall** use structured layout: `clusters/<name>/`, `infrastructure/`, `apps/`. | Must | |
+| FLUX-006 | Reconciliation interval **shall** be ≤5 minutes. | Must | |
+| FLUX-007 | Dependency ordering (`dependsOn`) **shall** enforce infrastructure-before-apps. | Must | |
+| FLUX-008 | Git auth **shall** use SSH keys stored as K8s Secrets. | Must | |
+| FLUX-009 | Bootstrap **shall** be automated within the Terraform infrastructure code. | Must | |
 
 ### 5.5 Coder
 
 | ID | Requirement | Priority | Notes |
 |---|---|---|---|
 | CDR-001 | Coder **shall** be deployed on EKS via the official Helm chart. | Must | |
-| CDR-002 | Coder **shall** be exposed via an AWS NLB with TLS termination using ACM certificates. | Must | |
-| CDR-003 | Coder **shall** use an RDS PostgreSQL 15+ instance as its database backend. | Must | |
-| CDR-004 | Coder **shall** integrate with the Keycloak IdP for OIDC-based authentication. | Must | |
-| CDR-005 | Coder **shall** leverage Karpenter-managed NodePools for workspace scheduling. | Must | |
-| CDR-006 | Coder **shall** be configured with pod topology spread constraints across availability zones. | Should | |
-| CDR-007 | Coder provisioners **shall** use IRSA for AWS API access (no static credentials). | Must | |
-| CDR-008 | Coder workspace templates **shall** be stored in the GitLab CE instance and managed via Terraform. | Must | |
-| CDR-009 | Coder **shall** have AI Bridge enabled. | Must | See §5.6 |
-| CDR-010 | Coder **shall** be deployed with the `coder-observability` Helm chart for Prometheus + Grafana + Loki integration. | Must | |
-| CDR-011 | Coder resource requests **shall** be at minimum 1000m CPU / 2Gi memory per replica. | Must | Per ai.coder.com baseline |
-| CDR-012 | Coder **should** support both Kubernetes-based and EC2-based workspace templates. | Should | |
+| CDR-002 | Coder **shall** be exposed via AWS NLB with TLS termination (ACM). | Must | |
+| CDR-003 | Coder **shall** use RDS PostgreSQL 15+ as its database. | Must | |
+| CDR-004 | Coder **shall** authenticate users via GitLab CE OIDC. | Must | GitLab as IdP — no Keycloak needed |
+| CDR-005 | Coder workspaces **shall** schedule on Karpenter-managed NodePools. | Must | |
+| CDR-006 | Pod topology spread **should** distribute across AZs. | Should | |
+| CDR-007 | Provisioners **shall** use IRSA for AWS access. | Must | |
+| CDR-008 | Workspace templates **shall** be stored in GitLab CE, managed via Terraform. | Must | |
+| CDR-009 | AI Bridge **shall** be enabled. | Must | See §5.6 |
+| CDR-010 | The `coder-observability` chart **shall** be deployed for monitoring. | Must | |
+| CDR-011 | Resource requests **shall** be ≥1000m CPU / 2Gi memory per replica. | Must | |
+| CDR-012 | Coder **should** support both K8s and EC2 workspace templates. | Should | |
 
 ### 5.6 AI Bridge + LiteLLM
 
 | ID | Requirement | Priority | Notes |
 |---|---|---|---|
-| AI-001 | Coder AI Bridge **shall** be enabled to proxy AI coding tool requests (Claude Code, Cursor, Copilot, etc.). | Must | |
-| AI-002 | LiteLLM **shall** be deployed on EKS via Helm as the upstream AI gateway for AI Bridge. | Must | Per ai.coder.com pattern |
-| AI-003 | LiteLLM **shall** integrate with AWS Bedrock using IRSA (IAM role with `AmazonBedrockFullAccess` or scoped policy). | Must | No static keys |
-| AI-004 | LiteLLM **shall** be configured with horizontal pod autoscaling (min 1, max 5 replicas, 80% CPU target). | Must | |
-| AI-005 | LiteLLM **shall** use a PostgreSQL database (RDS or standalone) for API key management and usage tracking. | Must | |
-| AI-006 | AI Bridge **shall** support both Anthropic-compatible and OpenAI-compatible client endpoints. | Must | Per Coder AI Bridge docs |
-| AI-007 | AI Bridge **shall** record token usage, model selection, and request metadata for observability. | Must | |
-| AI-008 | LiteLLM **should** be fronted by a LoadBalancer service for direct administrative access. | Should | |
-| AI-009 | LiteLLM model configuration **shall** be managed via a ConfigMap reconciled by FluxCD. | Must | GitOps-managed model routing |
+| AI-001 | AI Bridge **shall** be enabled to proxy requests from AI coding tools (Claude Code, Cursor, etc.). | Must | |
+| AI-002 | LiteLLM **shall** be deployed on EKS via Helm as the upstream AI gateway. | Must | |
+| AI-003 | LiteLLM **shall** integrate with AWS Bedrock via IRSA. | Must | No static keys |
+| AI-004 | LiteLLM **shall** autoscale (min 1, max 5, 80% CPU target). | Must | |
+| AI-005 | LiteLLM **shall** use PostgreSQL (RDS or standalone) for API key/usage tracking. | Must | |
+| AI-006 | AI Bridge **shall** support Anthropic-compatible and OpenAI-compatible endpoints. | Must | |
+| AI-007 | AI Bridge **shall** record token usage and request metadata. | Must | |
+| AI-008 | LiteLLM model config **shall** be managed via ConfigMap reconciled by FluxCD. | Must | |
 
 ### 5.7 GitLab CE
 
 | ID | Requirement | Priority | Notes |
 |---|---|---|---|
-| GL-001 | GitLab Community Edition **shall** be deployed on EC2 using the Omnibus package. | Must | Per trade study §2.2 |
-| GL-002 | The GitLab EC2 instance(s) **shall** run RHEL 9 or Amazon Linux 2023 with FIPS kernel mode enabled. | Must | |
-| GL-003 | GitLab **shall** use RDS PostgreSQL as its database backend (replacing the bundled PostgreSQL). | Must | |
-| GL-004 | GitLab **shall** use ElastiCache Redis as its cache/queue backend (replacing the bundled Redis). | Must | |
-| GL-005 | GitLab **shall** use S3 for object storage (LFS, artifacts, uploads, packages, backups). | Must | |
-| GL-006 | GitLab **shall** be fronted by an NLB or ALB with TLS termination via ACM. | Must | |
-| GL-007 | GitLab **shall** serve as the Git source-of-truth for all GitOps repositories (FluxCD source). | Must | |
-| GL-008 | GitLab **shall** serve as the Git host for Coder workspace templates. | Must | |
-| GL-009 | GitLab **should** integrate with Keycloak for SAML/OIDC SSO. | Should | |
-| GL-010 | GitLab **should** be deployed in an Auto Scaling Group (min 1, max 2) for instance recovery. | Should | |
-| GL-011 | GitLab host OS **should** be hardened per DISA RHEL 9 STIG. | Should | |
-| GL-012 | GitLab backups **shall** be automated daily to S3 with a 30-day retention policy. | Must | |
+| GL-001 | GitLab CE **shall** be deployed on EC2 via Omnibus. | Must | |
+| GL-002 | The EC2 instance **shall** run Amazon Linux 2023 or RHEL 9 with FIPS kernel mode. | Must | |
+| GL-003 | GitLab **shall** use the bundled PostgreSQL and Redis (single-instance demo). | Must | Simplicity — no RDS/ElastiCache overhead for demo |
+| GL-004 | GitLab **shall** use S3 for object storage (LFS, artifacts, backups). | Must | |
+| GL-005 | GitLab **shall** be fronted by an NLB with TLS via ACM. | Must | |
+| GL-006 | GitLab **shall** serve as Git source-of-truth for all FluxCD and Coder template repos. | Must | |
+| GL-007 | GitLab **shall** act as the OIDC provider for Coder authentication. | Must | |
+| GL-008 | GitLab backups **shall** run daily to S3 with 30-day retention. | Must | |
+| GL-009 | GitLab host OS **should** be hardened per DISA STIG (best-effort). | Should | |
+| GL-010 | GitLab **should** be in an ASG (min 1, max 1) for self-healing on instance failure. | Should | |
 
-### 5.8 Nexus Repository OSS
+### 5.8 Secrets Management
 
 | ID | Requirement | Priority | Notes |
 |---|---|---|---|
-| NEX-001 | Nexus Repository OSS **shall** be deployed on EC2. | Must | Per trade study §2.3 |
-| NEX-002 | The Nexus EC2 instance **shall** run RHEL 9 or Amazon Linux 2023 with FIPS kernel mode enabled. | Must | |
-| NEX-003 | Nexus **shall** use S3 as its blobstore backend for artifact storage. | Must | Unlimited, durable storage |
-| NEX-004 | Nexus **shall** be configured with proxy repositories for: Maven Central, npm registry, PyPI, Docker Hub. | Must | Standard dependency proxying |
-| NEX-005 | Nexus **shall** be configured with hosted repositories for: internal Maven, npm, Docker. | Must | |
-| NEX-006 | Nexus **shall** be fronted by an NLB or ALB with TLS termination via ACM. | Must | |
-| NEX-007 | Nexus host OS **should** be hardened per DISA RHEL 9 STIG. | Should | |
-| NEX-008 | Nexus **shall** be deployed in an Auto Scaling Group (min 1, max 1) for self-healing on instance failure. | Must | CE is single-instance only |
-| NEX-009 | Nexus data **shall** be persisted on an EBS volume with automated snapshots. | Must | |
-| NEX-010 | Nexus **should** integrate with Keycloak for SSO via SAML (Nexus Pro) or LDAP-backed auth. | Should | CE has limited SSO; Keycloak LDAP adapter is an option |
+| SEC-SM-001 | **AWS Secrets Manager** **shall** store all sensitive values (DB passwords, API keys, OAuth secrets). | Must | Zero-ops replacement for Vault |
+| SEC-SM-002 | The **External Secrets Operator** **shall** be deployed on EKS to sync Secrets Manager entries into K8s Secrets. | Must | |
+| SEC-SM-003 | No secrets **shall** be stored in plain text in Git. All secrets **shall** be referenced via ExternalSecret CRs. | Must | |
+| SEC-SM-004 | Secrets Manager **shall** use KMS encryption (default or CMK). | Must | |
 
-### 5.9 Vault (Secrets Management)
+### 5.9 Container Registry
 
 | ID | Requirement | Priority | Notes |
 |---|---|---|---|
-| VLT-001 | HashiCorp Vault OSS **shall** be deployed on EKS via the official Helm chart. | Must | |
-| VLT-002 | Vault **shall** use auto-unseal via AWS KMS. | Must | FIPS 140-3 L3 validated HSM backing |
-| VLT-003 | Vault **shall** use an integrated Raft storage backend or RDS PostgreSQL. | Must | |
-| VLT-004 | Vault **shall** be the central secrets store for all services (GitLab, Nexus, Coder, LiteLLM). | Must | |
-| VLT-005 | Vault **should** be configured as a PKI CA for internal TLS certificate issuance. | Should | |
-| VLT-006 | The External Secrets Operator **shall** be deployed to sync Vault secrets into Kubernetes Secrets for FluxCD-managed workloads. | Must | |
+| REG-001 | **Amazon ECR** **shall** be the container registry for workspace images and CI-built images. | Must | Zero-ops, FIPS endpoints available |
+| REG-002 | ECR repositories **shall** have image scanning enabled (basic or enhanced). | Must | |
+| REG-003 | ECR lifecycle policies **should** retain only the last 30 tagged images per repo. | Should | Cost control |
+| REG-004 | Coder workspace templates and GitLab CI **shall** push/pull from ECR. | Must | |
 
-### 5.10 Keycloak (Identity Provider)
+### 5.10 Observability
 
 | ID | Requirement | Priority | Notes |
 |---|---|---|---|
-| KC-001 | Keycloak **shall** be deployed on EKS via the official Bitnami or Keycloak Operator Helm chart. | Must | |
-| KC-002 | Keycloak **shall** use RDS PostgreSQL as its database backend. | Must | |
-| KC-003 | Keycloak **shall** be configured as the central OIDC/SAML IdP for Coder, GitLab, Grafana, and Vault. | Must | |
-| KC-004 | Keycloak **should** be configured with an X.509 user certificate authentication flow (PIV/CAC simulation). | Should | Gov customer integration point |
-| KC-005 | Keycloak **shall** use BouncyCastle FIPS or an equivalent FIPS-validated crypto provider. | Must | |
+| OBS-001 | The `coder-observability` Helm chart **shall** be deployed, providing Prometheus + Grafana + Loki. | Must | Single Helm release — pre-wired Coder dashboards |
+| OBS-002 | Loki **shall** use S3 for log storage. | Must | |
+| OBS-003 | Grafana Agent **shall** run as a DaemonSet on all nodes (including Karpenter-managed). | Must | |
+| OBS-004 | Grafana **should** be exposed via NLB with TLS for demo access. | Should | |
+| OBS-005 | Grafana **should** use a separate RDS PostgreSQL instance or SQLite for its own state. | Should | SQLite fine for demo |
 
-### 5.11 Harbor (Container Registry)
-
-| ID | Requirement | Priority | Notes |
-|---|---|---|---|
-| HBR-001 | Harbor **shall** be deployed on EKS via the official Helm chart. | Must | |
-| HBR-002 | Harbor **shall** use S3 for image layer storage. | Must | |
-| HBR-003 | Harbor **shall** be configured with automatic Trivy vulnerability scanning on push. | Must | |
-| HBR-004 | Harbor **should** replicate critical base images from upstream registries on a scheduled basis. | Should | Air-gap simulation |
-| HBR-005 | Harbor **shall** integrate with Keycloak for OIDC authentication. | Must | |
-| HBR-006 | Harbor **should** serve as the container registry for Coder workspace images and GitLab CI/CD pipelines. | Should | |
-
-### 5.12 Observability
-
-| ID | Requirement | Priority | Notes |
-|---|---|---|---|
-| OBS-001 | Prometheus **shall** be deployed for metrics collection from all EKS workloads. | Must | |
-| OBS-002 | Grafana **shall** be deployed with dashboards for Coder, Karpenter, EKS, and LiteLLM. | Must | |
-| OBS-003 | Loki **shall** be deployed for centralized log aggregation with S3 backend storage. | Must | |
-| OBS-004 | The Grafana Agent **shall** be deployed as a DaemonSet across all nodes (including Karpenter-managed). | Must | |
-| OBS-005 | Grafana **shall** integrate with Keycloak for OIDC authentication. | Should | |
-| OBS-006 | The `coder-observability` Helm chart **should** be used to deploy the Coder-specific observability stack. | Should | Pre-built dashboards for coderd, provisionerd, workspaces |
-
-### 5.13 Security & Compliance
+### 5.11 Security & Compliance
 
 | ID | Requirement | Priority | Notes |
 |---|---|---|---|
 | SEC-001 | All cryptographic operations **shall** use FIPS 140-2/140-3 validated modules. | Must | |
-| SEC-002 | AWS KMS **shall** be used for all encryption key management (EBS, S3, RDS, Secrets Manager). | Must | KMS HSMs are FIPS 140-3 L3 certified |
+| SEC-002 | AWS KMS **shall** be used for all encryption key management. | Must | |
 | SEC-003 | All inter-service communication **shall** use TLS 1.2+. | Must | |
-| SEC-004 | No long-lived IAM access keys **shall** be used for in-cluster workloads; IRSA **shall** be the standard pattern. | Must | |
-| SEC-005 | CloudTrail **shall** be enabled for all API activity logging. | Must | |
-| SEC-006 | All container images **should** be sourced from Harbor (internal registry) or verified upstream sources. | Should | |
-| SEC-007 | Kubernetes NetworkPolicies **should** be enforced to restrict pod-to-pod communication to required paths only. | Should | |
-| SEC-008 | EC2 instances **should** be hardened per DISA STIG for the applicable OS (RHEL 9 or AL2023). | Should | Best-effort per user guidance |
-| SEC-009 | EKS nodes **should** use Bottlerocket FIPS AMIs which follow a minimal, immutable OS design. | Should | Reduced attack surface |
-| SEC-010 | All Terraform state **shall** be stored in an S3 backend with DynamoDB locking, encrypted via KMS. | Must | |
+| SEC-004 | No long-lived IAM access keys in-cluster; IRSA only. | Must | |
+| SEC-005 | CloudTrail **shall** be enabled. | Must | |
+| SEC-006 | Container images **should** be pulled from ECR or verified upstream sources. | Should | |
+| SEC-007 | NetworkPolicies **should** restrict pod-to-pod traffic to required paths. | Should | |
+| SEC-008 | EC2 host OS **should** be STIG-hardened (best-effort). | Should | |
+| SEC-009 | EKS nodes **should** use Bottlerocket FIPS AMIs (minimal, immutable). | Should | |
 
-### 5.14 FluxCD Bootstrap & GitOps Workflow
+### 5.12 Bootstrap & GitOps Workflow
 
 | ID | Requirement | Priority | Notes |
 |---|---|---|---|
-| BOOT-001 | The EKS cluster **shall** be provisioned via Terraform before FluxCD bootstrap. | Must | |
-| BOOT-002 | FluxCD bootstrap **shall** be executed as a Terraform resource (`flux_bootstrap_git`) within the infrastructure code. | Must | |
-| BOOT-003 | The bootstrap process **shall** install FluxCD controllers and configure them to reconcile from the GitLab CE repository. | Must | |
-| BOOT-004 | The repository **shall** use the following directory structure: | Must | |
+| BOOT-001 | EKS **shall** be provisioned via Terraform before FluxCD bootstrap. | Must | |
+| BOOT-002 | FluxCD bootstrap **shall** be a Terraform resource (`flux_bootstrap_git`). | Must | |
+| BOOT-003 | Bootstrap **shall** install Flux and configure reconciliation from GitLab CE. | Must | |
+| BOOT-004 | The repository **shall** use the following structure: | Must | |
 
 ```
 gov.demo.coder.com/
 ├── docs/
-│   └── REQUIREMENTS.md          # This document
+│   └── REQUIREMENTS.md
 ├── infra/
-│   ├── terraform/
-│   │   ├── 1-network/           # VPC, subnets, NAT, Route 53
-│   │   ├── 2-data/              # RDS, ElastiCache, S3, KMS
-│   │   ├── 3-eks/               # EKS cluster, managed node groups, IRSA roles
-│   │   ├── 4-bootstrap/         # FluxCD bootstrap, Karpenter install
-│   │   └── 5-ec2-services/      # GitLab CE, Nexus OSS EC2 instances
-│   └── modules/                 # Reusable Terraform modules
+│   └── terraform/
+│       ├── 1-network/            # VPC, subnets, NAT, Route 53
+│       ├── 2-data/               # RDS, S3, KMS, Secrets Manager, ECR
+│       ├── 3-eks/                # EKS cluster, node groups, IRSA roles
+│       ├── 4-bootstrap/          # FluxCD bootstrap, Karpenter
+│       └── 5-gitlab/             # GitLab CE EC2 instance
 ├── clusters/
 │   └── gov-demo/
-│       ├── flux-system/         # FluxCD self-managed manifests
-│       ├── infrastructure/      # Cluster-level infra (CRDs, namespaces, policies)
-│       │   ├── sources/         # HelmRepositories, GitRepositories
-│       │   ├── karpenter/       # NodePools, EC2NodeClasses
-│       │   ├── cert-manager/
+│       ├── flux-system/          # FluxCD self-managed manifests
+│       ├── infrastructure/       # CRDs, namespaces, sources
+│       │   ├── sources/
+│       │   ├── karpenter/
 │       │   ├── external-secrets/
 │       │   └── kustomization.yaml
-│       └── apps/                # Application deployments
+│       └── apps/
 │           ├── coder/
 │           ├── litellm/
-│           ├── vault/
-│           ├── keycloak/
-│           ├── harbor/
 │           ├── monitoring/
 │           └── kustomization.yaml
-└── templates/                   # Coder workspace templates
+└── templates/
     ├── kubernetes-claude/
     ├── aws-linux/
     └── aws-devcontainer/
@@ -382,9 +322,9 @@ gov.demo.coder.com/
 
 | ID | Requirement | Priority | Notes |
 |---|---|---|---|
-| BOOT-005 | Infrastructure HelmReleases **shall** reconcile before application HelmReleases (via `dependsOn`). | Must | |
-| BOOT-006 | The bootstrap sequence **shall** be: Network → Data → EKS → FluxCD → Karpenter → Platform Services → Coder. | Must | |
-| BOOT-007 | All Helm chart versions **shall** be pinned in the FluxCD HelmRelease manifests. | Must | Reproducibility |
+| BOOT-005 | Infrastructure **shall** reconcile before apps (via `dependsOn`). | Must | |
+| BOOT-006 | Deploy sequence: Network → Data → EKS → FluxCD → Karpenter → Coder + LiteLLM. | Must | |
+| BOOT-007 | All Helm chart versions **shall** be pinned. | Must | |
 
 ---
 
@@ -392,34 +332,29 @@ gov.demo.coder.com/
 
 | Req ID | Category | Traces To |
 |---|---|---|
-| INFRA-001 – INFRA-012 | AWS GovCloud Infrastructure | FedRAMP High baseline, NIST SP 800-53 |
-| EKS-001 – EKS-008 | EKS Cluster | CIS Amazon EKS Benchmark, ai.coder.com reference |
-| KARP-001 – KARP-008 | Karpenter | ai.coder.com reference architecture |
-| FLUX-001 – FLUX-010 | FluxCD GitOps | Trade Study §2.1, FluxCD best practices |
-| CDR-001 – CDR-012 | Coder | ai.coder.com reference, Coder docs |
-| AI-001 – AI-009 | AI Bridge / LiteLLM | ai.coder.com reference, Coder AI Bridge docs |
-| GL-001 – GL-012 | GitLab CE | Trade Study §2.2, GitLab AWS reference arch |
-| NEX-001 – NEX-010 | Nexus OSS | Trade Study §2.3, Sonatype docs |
-| VLT-001 – VLT-006 | Vault | HashiCorp Vault reference arch |
-| KC-001 – KC-005 | Keycloak | Gov IdP integration pattern |
-| HBR-001 – HBR-006 | Harbor | Supply chain security, gov container policy |
-| OBS-001 – OBS-006 | Observability | ai.coder.com reference |
-| SEC-001 – SEC-010 | Security & Compliance | FIPS 140-2/3, DISA STIG, NIST SP 800-53 |
-| BOOT-001 – BOOT-007 | Bootstrap / GitOps Workflow | FluxCD docs, Terraform Flux provider |
+| INFRA-001 – INFRA-012 | AWS Infrastructure | NIST SP 800-53, FIPS 140-3 |
+| EKS-001 – EKS-008 | EKS Cluster | CIS EKS Benchmark, ai.coder.com |
+| KARP-001 – KARP-008 | Karpenter | ai.coder.com reference |
+| FLUX-001 – FLUX-009 | FluxCD | Trade Study §3, FluxCD best practices |
+| CDR-001 – CDR-012 | Coder | ai.coder.com, Coder docs |
+| AI-001 – AI-008 | AI Bridge / LiteLLM | ai.coder.com, Coder AI Bridge docs |
+| GL-001 – GL-010 | GitLab CE | GitLab AWS reference arch |
+| SEC-SM-001 – SEC-SM-004 | Secrets Management | AWS Secrets Manager docs |
+| REG-001 – REG-004 | Container Registry | ECR docs |
+| OBS-001 – OBS-005 | Observability | ai.coder.com |
+| SEC-001 – SEC-009 | Security & Compliance | FIPS 140-2/3, DISA STIG |
+| BOOT-001 – BOOT-007 | Bootstrap | FluxCD docs, Terraform Flux provider |
 
 ---
 
-## 7. Open Items / Decisions Needed
+## 7. Open Items
 
 | # | Item | Status |
 |---|---|---|
-| 1 | GovCloud region selection: us-gov-west-1 vs us-gov-east-1 | Open |
-| 2 | Domain name for the environment (e.g., `gov.demo.coder.com`) | Open |
-| 3 | Bedrock model access: which Claude / Nova models to enable in GovCloud | Open — verify Bedrock availability in GovCloud |
-| 4 | STIG depth: automated STIG scanning (e.g., OpenSCAP) vs manual checklist | Open — user indicated best-effort |
-| 5 | Vault deployment: OSS Raft mode vs Vault with RDS backend | Open |
-| 6 | Coder license tier: Enterprise vs OSS (impacts external provisioners, RBAC) | Open |
-| 7 | GitLab CE runner strategy: Shell executor on GitLab EC2, or K8s executor on EKS | Open |
-| 8 | Harbor vs ECR: whether to use Harbor or lean on native ECR in GovCloud | Open |
-| 9 | Air-gap simulation: should the env simulate disconnected/air-gapped constraints | Open |
-| 10 | FluxCD enterprise (ControlPlane) vs OSS | Open |
+| 1 | Commercial region: us-east-1 vs us-west-2 | Open |
+| 2 | Domain name (e.g., `gov.demo.coder.com`) | Open |
+| 3 | Bedrock model selection (Claude Sonnet/Opus, Nova) | Open |
+| 4 | Coder license tier: Enterprise vs OSS | Open |
+| 5 | GitLab CI runner strategy: shell executor on EC2, or K8s executor on EKS | Open |
+| 6 | NAT strategy: fck-nat (cheap) vs AWS NAT Gateway (zero-ops) | Open |
+| 7 | FluxCD: OSS vs ControlPlane Enterprise (AWS Marketplace) | Open |
