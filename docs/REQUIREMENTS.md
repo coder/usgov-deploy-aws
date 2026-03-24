@@ -2,7 +2,7 @@
 
 **Project:** coder4gov.com
 **Classification:** Unclassified — For Demo/Reference Use
-**Version:** 0.5.0-DRAFT
+**Version:** 1.0.0-DRAFT
 **Date:** 2025-03-24
 
 ---
@@ -106,7 +106,7 @@ The single-region IaC is structured to make this additive, not a rewrite.
 
 ```mermaid
 graph TB
-    R53["Route 53: coder4gov.com<br/>dev. → Coder NLB<br/>*.dev. → Coder workspaces<br/>gitlab. → GitLab NLB<br/>sso. → Keycloak NLB<br/>grafana.dev. → Grafana NLB"]
+    R53["Route 53: coder4gov.com<br/>dev. → Coder ALB<br/>*.dev. → Coder workspaces<br/>gitlab. → GitLab ALB<br/>sso. → Keycloak ALB<br/>grafana.dev. → Grafana ALB"]
 
     subgraph REGION["us-west-2 · multi-AZ"]
         subgraph VPC["VPC"]
@@ -148,7 +148,7 @@ graph TB
     GITLAB --> S3
 ```
 
-**What you keep alive:** 1 EKS cluster (6 Helm charts) + 1 EC2 (GitLab) + managed AWS services.
+**What you keep alive:** 1 EKS cluster (~10 Helm charts) + 1 EC2 (GitLab) + managed AWS services.
 
 ---
 
@@ -168,7 +168,7 @@ graph TB
 | INFRA-008 | The VPC **shall** span ≥2 AZs. | Must |
 | INFRA-009 | Security groups **shall** follow least-privilege. | Must |
 | INFRA-010 | Route 53 **shall** host the `coder4gov.com` zone (AWS-registered domain, no delegation needed). ACM **shall** provision TLS certs. | Must |
-| INFRA-011 | Elastic IPs **should** be allocated for stable ingress. | Should |
+| INFRA-011 | Elastic IPs **may** be allocated for any services still using NLB (ALBs use dynamic DNS names). | Should |
 | INFRA-012 | Terraform state **shall** be in S3 + DynamoDB, KMS-encrypted. | Must |
 | INFRA-013 | Amazon SES **shall** be configured in us-west-2 for transactional email (password resets, notifications). | Must |
 | INFRA-014 | The `coder4gov.com` domain **shall** be verified in SES with SPF, DKIM, and DMARC DNS records in Route 53. All services **shall** send from `noreply@coder4gov.com`. | Must |
@@ -306,7 +306,7 @@ graph TB
 | OBS-001 | `coder-observability` chart **shall** be deployed. | Must |
 | OBS-002 | Loki **shall** use S3 for log storage. | Must |
 | OBS-003 | Grafana Agent **shall** run as DaemonSet on all nodes. | Must |
-| OBS-004 | Grafana **should** be exposed via NLB + TLS at `grafana.dev.coder4gov.com`. | Should |
+| OBS-004 | Grafana **should** be exposed via ALB + TLS at `grafana.dev.coder4gov.com`. | Should |
 | OBS-005 | Grafana **should** authenticate users via Keycloak OIDC. | Should |
 
 ### 6.12 Keycloak (SSO / Identity Provider)
@@ -339,7 +339,7 @@ graph TB
 | MESH-003 | The `coder`, `coder-provisioner`, `litellm`, and `keycloak` namespaces **shall** be labeled `istio-injection=enabled`. | Must |
 | MESH-004 | A `PeerAuthentication` with `mode: STRICT` **shall** be applied to all mesh-enrolled namespaces. | Must |
 | MESH-005 | `istio-system`, `kube-system`, `flux-system`, and `karpenter` namespaces **shall NOT** be in the mesh. | Must |
-| MESH-006 | Istio Ingress Gateway **may** replace NLB for north-south if beneficial; otherwise NLB direct with mesh east-west only. | May |
+| MESH-006 | Istio Ingress Gateway **may** be used for north-south if beneficial; otherwise NLB direct with mesh east-west only. | May |
 | MESH-007 | Istio **shall** be scoped to mTLS only — no VirtualService routing or traffic splitting initially. | Must |
 | MESH-008 | Kiali **may** be deployed for mesh visualization. | May |
 
@@ -389,7 +389,7 @@ coder4gov.com/
 │   └── terraform/
 │       ├── 0-state/              # S3 backend + DynamoDB
 │       ├── 1-network/            # VPC, subnets, NAT GW, Route 53
-│       ├── 2-data/               # RDS (Coder DB + LiteLLM DB), S3, KMS, Secrets Mgr, ECR
+│       ├── 2-data/               # RDS (Coder + LiteLLM + Keycloak DBs), S3, KMS, Secrets Mgr, ECR
 │       ├── 3-eks/                # EKS cluster, node groups, IRSA
 │       ├── 4-bootstrap/          # FluxCD + Karpenter
 │       └── 5-gitlab/             # GitLab CE EC2 + Docker Runner
@@ -405,6 +405,7 @@ coder4gov.com/
 │       └── apps/
 │           ├── coder-server/
 │           ├── coder-provisioner/
+│           ├── keycloak/
 │           ├── litellm/
 │           ├── monitoring/
 │           └── kustomization.yaml
@@ -434,10 +435,10 @@ coder4gov.com/
 | CDR-001 – 018 | Coder | ai.coder.com, Coder docs |
 | PROV-001 – 005 | Provisioners | ai.coder.com coder-provisioner module |
 | AI-001 – AI-010 | AI Bridge / LiteLLM | ai.coder.com, Coder AI Bridge docs |
-| GL-001 – 015 | GitLab CE + Runner | GitLab AWS reference arch |
+| GL-001 – 016 | GitLab CE + Runner | GitLab AWS reference arch |
 | SM-001 – 004 | Secrets | AWS Secrets Manager docs |
-| REG-001 – 003 | Registry | ECR docs |
-| OBS-001 – 004 | Observability | ai.coder.com |
+| REG-001 – 004 | Registry | ECR docs |
+| OBS-001 – 005 | Observability | ai.coder.com |
 | KC-001 – 016 | Keycloak / SSO | Keycloak docs, OIDC best practices |
 | MESH-001 – 008 | Istio / mTLS | Istio docs, EKS best practices |
 | SEC-001 – 013 | Security | FIPS 140-2/3, DISA STIG |
