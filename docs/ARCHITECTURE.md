@@ -12,15 +12,17 @@
 2. [Executive Overview (C4 Context)](#1-executive-overview--c4-context-level)
 3. [System Container Diagram (C4 Container)](#2-system-container-diagram--c4-container-level)
 4. [Network Topology](#3-network-topology)
-5. [EKS Cluster Architecture](#4-eks-cluster-architecture)
-6. [Authentication & SSO Flow](#5-authentication--sso-flow)
-7. [AI Model Routing](#6-ai-model-routing)
-8. [GitOps Reconciliation Flow](#7-gitops-reconciliation-flow)
-9. [Secret Management Flow](#8-secret-management-flow)
-10. [Terraform Layer Dependency Graph](#9-terraform-layer-dependency-graph)
-11. [FIPS Compliance Architecture](#10-fips-compliance-architecture)
-12. [Disaster Recovery & Backup Architecture](#11-disaster-recovery--backup-architecture)
-13. [WAF & Security Boundary](#12-waf--security-boundary)
+5. [Security Groups & Port-Level Access](#3a-security-groups--port-level-access)
+6. [Ingress & Egress Traffic Flows](#3b-ingress--egress-traffic-flows)
+7. [EKS Cluster Architecture](#4-eks-cluster-architecture)
+8. [Authentication & SSO Flow](#5-authentication--sso-flow)
+9. [AI Model Routing](#6-ai-model-routing)
+10. [GitOps Reconciliation Flow](#7-gitops-reconciliation-flow)
+11. [Secret Management Flow](#8-secret-management-flow)
+12. [Terraform Layer Dependency Graph](#9-terraform-layer-dependency-graph)
+13. [FIPS Compliance Architecture](#10-fips-compliance-architecture)
+14. [Disaster Recovery & Backup Architecture](#11-disaster-recovery--backup-architecture)
+15. [WAF & Security Boundary](#12-waf--security-boundary)
 
 ---
 
@@ -253,6 +255,138 @@ graph TB
 | Internet → GitLab | Internet → IGW → ALB (public subnet) → EC2 (private subnet) |
 | Pods → Internet (e.g., AI APIs) | Pod → NAT GW (public subnet) → IGW → Internet |
 | Pod → RDS | Pod (private subnet) → RDS endpoint (private subnet, same VPC) |
+
+---
+
+## 3a. Security Groups & Port-Level Access
+
+Five security groups control network access across the deployment. The EKS module creates two automatically (cluster SG, node SG); the remaining three are explicit Terraform resources. All follow least-privilege: every ingress rule names its source, and no security group allows `0.0.0.0/0` inbound except the ALBs on ports 80/443.
+
+```mermaid
+graph TB
+    INTERNET3(("Internet"))
+
+    subgraph PUBLIC["Public Subnets"]
+        ALB_EKS3["ALB: EKS Services\n<i>SG: managed by ALB Controller</i>\n───────\nIngress: 443/tcp from 0.0.0.0/0\nEgress: target pods via node SG"]
+        ALB_GL3["ALB: GitLab\n<i>SG: gitlab-alb</i>\n───────\nIngress: 80,443/tcp from 0.0.0.0/0\nEgress: 80/tcp → gitlab-ec2 SG"]
+    end
+
+    subgraph PRIVATE_SYS["Private-System Subnets"]
+        EKS_NODE3["EKS Node SG\n<i>SG: coder4gov-eks-node</i>\n───────\nTagged: karpenter.sh/discovery\nIngress: all from cluster SG\nIngress: all from self (node↔node)\nEgress: all outbound"]
+        EKS_CLUSTER3["EKS Cluster SG\n<i>SG: coder4gov-eks-cluster</i>\n───────\nIngress: 443/tcp from node SG\nEgress: all to node SG"]
+        GL_EC23["GitLab EC2\n<i>SG: gitlab-ec2</i>\n───────\nIngress: 80/tcp from gitlab-alb SG ONLY\nIngress: 22/tcp DISABLED (GL-016)\nEgress: all (S3, SES, ECR, packages)"]
+    end
+
+    subgraph PRIVATE_DATA["Private Subnets (data tier)"]
+        RDS3["RDS PostgreSQL\n<i>SG: coder4gov-rds</i>\n───────\nIngress: 5432/tcp from VPC CIDR\nIngress: 5432/tcp from EKS node SG\nEgress: all outbound"]
+    end
+
+    %% Internet → ALBs
+    INTERNET3 -->|"443/tcp HTTPS"| ALB_EKS3
+    INTERNET3 -->|"80,443/tcp"| ALB_GL3
+
+    %% ALBs → backends
+    ALB_EKS3 -->|"target-type: ip\npod IPs in node SG"| EKS_NODE3
+    ALB_GL3 -->|"80/tcp"| GL_EC23
+
+    %% Cluster ↔ Node
+    EKS_CLUSTER3 <-->|"443/tcp API\nall node comms"| EKS_NODE3
+
+    %% Nodes → RDS
+    EKS_NODE3 -->|"5432/tcp\nCoder, LiteLLM, Keycloak"| RDS3
+    GL_EC23 -.->|"no direct DB access\n(not in SG rule)"| RDS3
+
+    %% Nodes → Internet (via NAT)
+    EKS_NODE3 -->|"all outbound\nvia NAT GW"| INTERNET3
+    GL_EC23 -->|"all outbound\nvia NAT GW"| INTERNET3
+```
+
+### Port Matrix
+
+Every allowed port in the system:
+
+| Source | Destination | Port | Protocol | Purpose | Terraform Resource |
+|--------|-------------|------|----------|---------|--------------------|
+| `0.0.0.0/0` | GitLab ALB SG | 443 | TCP | HTTPS from internet | `5-gitlab/security-groups.tf` |
+| `0.0.0.0/0` | GitLab ALB SG | 80 | TCP | HTTP → HTTPS redirect | `5-gitlab/security-groups.tf` |
+| GitLab ALB SG | GitLab EC2 SG | 80 | TCP | ALB → GitLab (TLS terminated at ALB) | `5-gitlab/security-groups.tf` |
+| `0.0.0.0/0` | EKS ALB (managed) | 443 | TCP | HTTPS to Coder/Keycloak/Grafana | ALB Controller annotations |
+| EKS ALB | EKS Node SG | pod ports | TCP | ALB → target pods (IP mode) | ALB Controller target-type: ip |
+| EKS Node SG | EKS Cluster SG | 443 | TCP | kubelet → API server | EKS module (auto-created) |
+| EKS Cluster SG | EKS Node SG | all | TCP | API server → kubelets, webhooks | EKS module (auto-created) |
+| EKS Node SG | EKS Node SG | all | all | Pod-to-pod (CNI, Istio mTLS) | EKS module (auto-created) |
+| EKS Node SG | RDS SG | 5432 | TCP | Coder/LiteLLM/Keycloak → Postgres | `3-eks/main.tf` |
+| VPC CIDR | RDS SG | 5432 | TCP | Broad VPC access (fallback) | `2-data/rds.tf` |
+| GitLab EC2 SG | `0.0.0.0/0` | all | all | Outbound (S3, SES, ECR, apt) | `5-gitlab/security-groups.tf` |
+| EKS Node SG | `0.0.0.0/0` | all | all | Outbound via NAT (AI APIs, ECR, etc.) | EKS module (auto-created) |
+
+### What Is NOT Allowed
+
+| Blocked Path | Why | Enforcement |
+|---|---|---|
+| Internet → GitLab EC2 directly | No public IP, no SG ingress from `0.0.0.0/0` | SG + private subnet |
+| Internet → EKS nodes directly | No public IP, private subnets only | Subnet routing |
+| Internet → RDS | No public access, private subnets, SG restricted | `publicly_accessible = false` + SG |
+| SSH (port 22) → GitLab EC2 | SSH disabled per GL-016 | SG rule absent (empty `allowed_ssh_cidrs`) |
+| SSH → EKS nodes | No SSH key pair, no SG rule | EKS module config |
+| GitLab EC2 → RDS | Not in the EKS Node SG, no SG rule for GitLab→RDS | Explicit omission |
+| Pod → Pod (cross-namespace, no mesh) | Istio STRICT mTLS on coder/litellm/keycloak namespaces | PeerAuthentication |
+
+---
+
+## 3b. Ingress & Egress Traffic Flows
+
+Detailed path for every traffic type entering or leaving the VPC.
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant WAF as AWS WAF
+    participant ALB as ALB (public subnet)
+    participant ISTIO as Istio Sidecar
+    participant Pod as App Pod (private subnet)
+    participant NAT as NAT Gateway
+    participant ExtAPI as External API (OpenAI, etc.)
+
+    Note over User,Pod: === INGRESS: User → Coder ===
+    User->>WAF: HTTPS :443 (dev.coder4gov.com)
+    WAF->>WAF: Evaluate rules (CRS, Bot Control)
+    WAF->>ALB: Allowed request
+    ALB->>ALB: TLS termination (ACM cert)
+    ALB->>ISTIO: HTTP → pod IP (target-type: ip)
+    ISTIO->>Pod: mTLS (Istio STRICT)
+    Pod-->>ISTIO: Response
+    ISTIO-->>ALB: Response
+    ALB-->>User: HTTPS response
+
+    Note over Pod,ExtAPI: === EGRESS: Pod → AI API ===
+    Pod->>NAT: HTTPS :443 (api.openai.com)
+    NAT->>ExtAPI: HTTPS via IGW + EIP
+    ExtAPI-->>NAT: Response
+    NAT-->>Pod: Response
+
+    Note over Pod,Pod: === EAST-WEST: Pod → Pod ===
+    Pod->>ISTIO: App request (e.g., Coder → LiteLLM)
+    ISTIO->>ISTIO: mTLS handshake (Istio CA)
+    ISTIO->>Pod: Decrypted request
+```
+
+### Egress Destinations
+
+All outbound connections from the VPC route through NAT Gateways (one per AZ) with static Elastic IPs. This is relevant for IP allowlisting on external services.
+
+| Source | Destination | Port | Purpose |
+|--------|-------------|------|---------|
+| LiteLLM pods | `bedrock-runtime.us-west-2.amazonaws.com` | 443 | Bedrock API (Claude models) — FIPS endpoint |
+| LiteLLM pods | `api.openai.com` | 443 | OpenAI API (GPT-5.4, Codex) |
+| LiteLLM pods | `generativelanguage.googleapis.com` | 443 | Gemini API |
+| ESO pods | `secretsmanager.us-west-2.amazonaws.com` | 443 | Secrets Manager — FIPS endpoint |
+| EKS nodes | `api.ecr.us-west-2.amazonaws.com` | 443 | ECR image pulls — FIPS endpoint |
+| EKS nodes | `eks.us-west-2.amazonaws.com` | 443 | EKS API — FIPS endpoint |
+| Loki pods | `s3.us-west-2.amazonaws.com` | 443 | S3 log storage — FIPS endpoint |
+| GitLab EC2 | `email-smtp.us-west-2.amazonaws.com` | 587 | SES SMTP (TLS STARTTLS) |
+| GitLab EC2 | `packages.gitlab.com`, apt repos | 443 | Package updates |
+| All pods | `169.254.169.254` | 80 | IMDS (instance metadata — disabled for pods via IRSA) |
 
 ---
 
