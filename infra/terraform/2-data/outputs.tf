@@ -127,3 +127,21 @@ output "secret_arns" {
     ses_smtp_credentials = aws_secretsmanager_secret.ses_smtp_credentials.arn
   }
 }
+
+# ---------------------------------------------------------------------------
+# OpenSearch Serverless (LOG-001 → LOG-007)
+# ---------------------------------------------------------------------------
+output "opensearch_collection_endpoint" {
+  description = "OpenSearch Serverless collection endpoint for the SIEM."
+  value       = aws_opensearchserverless_collection.siem.collection_endpoint
+}
+
+output "opensearch_collection_arn" {
+  description = "ARN of the OpenSearch Serverless SIEM collection."
+  value       = aws_opensearchserverless_collection.siem.arn
+}
+
+output "opensearch_dashboard_endpoint" {
+  description = "OpenSearch Dashboards endpoint."
+  value       = aws_opensearchserverless_collection.siem.dashboard_endpoint
+}
