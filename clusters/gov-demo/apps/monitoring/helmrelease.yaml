@@ -26,7 +26,7 @@ spec:
         type: s3
         s3:
           bucketName: "" # TODO: Fill from terraform output – loki_s3_bucket_name
-          region: us-west-2
+          region: us-west-2 # TODO: Override for GovCloud (us-gov-west-1)
 
     # OBS-002: Grafana dashboards exposed via ALB Ingress
     grafana:

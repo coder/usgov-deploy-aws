@@ -17,16 +17,12 @@ terraform {
   }
 
   backend "s3" {
-    bucket         = "coder4gov-terraform-state"
-    key            = "1-network/terraform.tfstate"
-    region         = "us-west-2"
-    dynamodb_table = "coder4gov-terraform-lock"
-    encrypt        = true
-    use_fips_endpoint              = true
-    dynamodb_endpoint              = "https://dynamodb-fips.us-west-2.amazonaws.com"
-    endpoints = {
-      s3 = "https://s3-fips.us-west-2.amazonaws.com"
-    }
+    bucket            = "coder4gov-terraform-state"
+    key               = "1-network/terraform.tfstate"
+    region            = "us-west-2"
+    encrypt           = true
+    dynamodb_table    = "coder4gov-terraform-lock"
+    use_fips_endpoint = true
   }
 }
 

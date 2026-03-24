@@ -67,7 +67,7 @@ variable "workspace_instance_types" {
 }
 
 variable "workspace_azs" {
-  description = "Availability zones for workspace nodes."
+  description = "Availability zones for workspace nodes. Must match the target region (e.g. us-gov-west-1a/b for GovCloud)."
   type        = list(string)
   default     = ["us-west-2a", "us-west-2b"]
 }

@@ -5,13 +5,13 @@
 variable "aws_region" {
   description = "AWS region for all resources."
   type        = string
-  default     = "us-gov-west-1"
+  default     = "us-west-2"
 }
 
 variable "aws_partition" {
   description = "AWS partition (aws or aws-us-gov)."
   type        = string
-  default     = "aws-us-gov"
+  default     = "aws"
 }
 
 variable "project_name" {

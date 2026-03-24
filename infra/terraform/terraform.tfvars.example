@@ -1,0 +1,52 @@
+################################################################################
+# terraform.tfvars.example
+# coder4gov.com — Gov Demo Environment
+#
+# Copy this file to terraform.tfvars in each layer directory and uncomment
+# the section that matches your target environment.
+#
+# The backend block (region, bucket, dynamodb_table) in providers.tf must
+# also be updated for GovCloud — backend blocks do not support variables.
+# See the GovCloud section below for the required changes.
+################################################################################
+
+# ============================================================================
+# AWS Commercial (us-west-2) — DEFAULT, no changes needed
+# ============================================================================
+# aws_region         = "us-west-2"
+# aws_partition      = "aws"
+# use_fips_endpoints = true
+# domain_name        = "coder4gov.com"
+
+# ============================================================================
+# AWS GovCloud (us-gov-west-1) — Uncomment to deploy in GovCloud
+# ============================================================================
+# aws_region         = "us-gov-west-1"
+# aws_partition      = "aws-us-gov"
+# use_fips_endpoints = true
+# domain_name        = "coder4gov.com"
+
+# ---------------------------------------------------------------------------
+# IMPORTANT: When switching to GovCloud, you must ALSO update each layer's
+# providers.tf backend block manually (variables are not allowed there):
+#
+#   backend "s3" {
+#     bucket            = "coder4gov-terraform-state"
+#     key               = "<layer>/terraform.tfstate"
+#     region            = "us-gov-west-1"          # ← change this
+#     encrypt           = true
+#     dynamodb_table    = "coder4gov-terraform-lock"
+#     use_fips_endpoint = true
+#   }
+#
+# GovCloud FIPS endpoints are used automatically when use_fips_endpoint = true.
+# No explicit endpoint URLs are needed.
+# ---------------------------------------------------------------------------
+
+# ============================================================================
+# Layer-specific overrides (Layer 4 — Bootstrap)
+# ============================================================================
+# Karpenter workspace node AZs — must match your region:
+#   Commercial: ["us-west-2a", "us-west-2b"]
+#   GovCloud:   ["us-gov-west-1a", "us-gov-west-1b"]
+# workspace_azs = ["us-west-2a", "us-west-2b"]
