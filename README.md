@@ -34,6 +34,10 @@ GovCloud-flavored demo environment for [Coder](https://coder.com). Single-region
 
 ## Architecture
 
+> Full diagrams (13 mermaid charts) covering network topology, SSO flows, AI routing,
+> GitOps reconciliation, secret management, FIPS compliance, and more:
+> **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**
+
 ```mermaid
 graph TB
     DNS["Route 53<br/>coder4gov.com"]
