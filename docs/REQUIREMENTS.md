@@ -228,6 +228,12 @@ graph TB
 | CDR-010 | Templates **shall** be stored in GitLab CE, managed via Terraform. | Must |
 | CDR-011 | Templates **should** support both K8s and EC2 workspace types. | Should |
 | CDR-012 | Coder binaries and container images **shall** be built from source with FIPS 140-3 mode enabled (`GOFIPS140=latest`). See `docs/CODER_FIPS_BUILD.md`. | Must |
+| CDR-013 | Path-based workspace apps **shall** be disabled. Only wildcard subdomain routing (`*.dev.gov.demo.coder.com`) **shall** be used. | Must |
+| CDR-014 | HSTS **shall** be enabled on the Coder ALB/Ingress. | Must |
+| CDR-015 | Connection Logs (Premium) **shall** be enabled for all workspace agent connections. | Must |
+| CDR-016 | Agent Boundaries **shall** be enabled on AI templates to restrict/audit agent network access. | Must |
+| CDR-017 | Audit log retention **shall** be ≥2 years (`CODER_AUDIT_LOGS_RETENTION`). | Must |
+| CDR-018 | A dedicated CI/CD service account **shall** push templates from GitLab (no human credentials). | Must |
 
 ### 6.6 Coder Provisioners
 
@@ -425,7 +431,7 @@ gov.demo.coder.com/
 | EKS-001 – 009 | EKS Cluster | CIS EKS Benchmark, ai.coder.com |
 | KARP-001 – 008 | Karpenter | ai.coder.com reference |
 | FLUX-001 – 007 | FluxCD | Trade Study §4 |
-| CDR-001 – 011 | Coder | ai.coder.com, Coder docs |
+| CDR-001 – 018 | Coder | ai.coder.com, Coder docs |
 | PROV-001 – 005 | Provisioners | ai.coder.com coder-provisioner module |
 | AI-001 – AI-010 | AI Bridge / LiteLLM | ai.coder.com, Coder AI Bridge docs |
 | GL-001 – 015 | GitLab CE + Runner | GitLab AWS reference arch |
@@ -456,11 +462,12 @@ gov.demo.coder.com/
 | 10 | Istio | Sidecar mode, mTLS STRICT on Coder/LiteLLM namespaces only. East-west encryption. No traffic management features initially. |
 | 11 | Keycloak | Central SSO, admin-only user provisioning. OIDC for Coder, GitLab, Grafana. All three auto-create users on first login. No self-registration. Shares RDS. `sso.gov.demo.coder.com`. |
 | 12 | Email | Amazon SES, single sender: `noreply@gov.demo.coder.com` for all services (Keycloak, GitLab, Coder if enabled later). Domain verified with SPF/DKIM/DMARC. |
-| 13 | WAF | ALB + AWS WAF (Managed Rules) on all public-facing services. Keycloak `/admin` IP-restricted. No CloudFront needed for demo. |
+| 13 | WAF | ALB + AWS WAF (Managed Rules). ALB supports wildcard subdomain routing for Coder (`*.dev.gov.demo.coder.com`). Keycloak `/admin` IP-restricted. No CloudFront. |
 | 14 | Passkeys | Keycloak WebAuthn Passwordless Policy enabled. TouchID/FIDO2/YubiKey supported. Required action for new users. |
 | 15 | GitLab SSH | Disabled. HTTPS-only for all Git operations. |
 | 16 | SIEM | CloudWatch Logs → OpenSearch Serverless. Ingests CloudTrail, VPC Flow Logs, Coder audit, Keycloak auth events. |
 | 17 | Shield | Standard only (automatic). No Shield Advanced. |
+| 18 | Coder security | Path-based apps disabled (XSS risk), wildcard subdomain only. HSTS, Connection Logs, Agent Boundaries enabled. Audit logs 2yr. Dedicated CI/CD service account. |
 
 ---
 
