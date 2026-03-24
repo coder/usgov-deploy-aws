@@ -308,9 +308,13 @@ graph TB
 | KC-003 | Keycloak **shall** be exposed via NLB + ACM TLS at `sso.gov.demo.coder.com`. | Must |
 | KC-004 | A single realm (`gov-demo`) **shall** be configured with OIDC clients for: Coder, GitLab, Grafana. | Must |
 | KC-005 | Users **shall** be managed locally in Keycloak (no LDAP/AD for demo). | Must |
-| KC-006 | Keycloak **should** enforce MFA (TOTP) for all users. | Should |
-| KC-007 | Keycloak **should** be configured with an X.509 client cert auth flow (PIV/CAC simulation) for demo purposes. | Should |
-| KC-008 | The `keycloak` namespace **shall** be labeled `istio-injection=enabled` for mTLS. | Must |
+| KC-006 | Self-service registration **shall** be disabled. User provisioning is admin-only via Keycloak admin console. | Must |
+| KC-007 | Keycloak **should** enforce MFA (TOTP) for all users. | Should |
+| KC-008 | Keycloak **should** be configured with an X.509 client cert auth flow (PIV/CAC simulation) for demo purposes. | Should |
+| KC-009 | The `keycloak` namespace **shall** be labeled `istio-injection=enabled` for mTLS. | Must |
+| KC-010 | Coder **shall** auto-create users on first OIDC login from Keycloak. | Must |
+| KC-011 | GitLab **shall** auto-create users on first OIDC login (`allow_single_sign_on`). | Must |
+| KC-012 | Grafana **shall** auto-create users on first OIDC login (`auto_login = true`). | Should |
 
 ### 6.13 Istio (Service Mesh / mTLS)
 
@@ -404,7 +408,7 @@ gov.demo.coder.com/
 | SM-001 – 004 | Secrets | AWS Secrets Manager docs |
 | REG-001 – 003 | Registry | ECR docs |
 | OBS-001 – 004 | Observability | ai.coder.com |
-| KC-001 – 008 | Keycloak / SSO | Keycloak docs, OIDC best practices |
+| KC-001 – 012 | Keycloak / SSO | Keycloak docs, OIDC best practices |
 | MESH-001 – 008 | Istio / mTLS | Istio docs, EKS best practices |
 | SEC-001 – 009 | Security | FIPS 140-2/3, DISA STIG |
 | BOOT-001 – 007 | Bootstrap | FluxCD docs |
@@ -425,7 +429,7 @@ gov.demo.coder.com/
 | 8 | Coder version | **Latest RC release** required for Coder Agents feature (`CODER_EXPERIMENTS=agents`). |
 | 9 | Coder FIPS build | Build Coder from source with `GOFIPS140=latest` (Go 1.24+ native FIPS 140-3). No cgo/BoringSSL needed. See `docs/CODER_FIPS_BUILD.md`. |
 | 10 | Istio | Sidecar mode, mTLS STRICT on Coder/LiteLLM namespaces only. East-west encryption. No traffic management features initially. |
-| 11 | Keycloak | Added back as central SSO. OIDC for Coder, GitLab, Grafana. Local users, optional MFA/PIV. Shares RDS. `sso.gov.demo.coder.com`. |
+| 11 | Keycloak | Central SSO, admin-only user provisioning. OIDC for Coder, GitLab, Grafana. All three auto-create users on first login. No self-registration. Shares RDS. `sso.gov.demo.coder.com`. |
 
 ---
 
