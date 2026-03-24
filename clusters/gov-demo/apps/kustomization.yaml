@@ -1,0 +1,10 @@
+# FluxCD Apps Kustomization for coder4gov.com
+# All application HelmReleases – depends on infrastructure/ being reconciled first
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - coder-server/
+  - coder-provisioner/
+  - litellm/
+  - keycloak/
+  - monitoring/

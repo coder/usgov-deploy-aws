@@ -1,0 +1,63 @@
+# KC-001 → KC-016: Keycloak SSO HelmRelease
+# Identity and access management – SAML/OIDC provider for Coder and GitLab
+# Bitnami Keycloak chart with external PostgreSQL (RDS)
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: keycloak
+  namespace: keycloak
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: keycloak
+      version: "24.*"
+      sourceRef:
+        kind: HelmRepository
+        name: bitnami
+        namespace: flux-system
+  values:
+    # KC-001: Admin user configuration
+    auth:
+      adminUser: admin
+      existingSecret: keycloak-admin-credentials
+
+    # KC-002: Disable bundled PostgreSQL – use external RDS
+    postgresql:
+      enabled: false
+
+    # KC-003: External RDS database connection
+    externalDatabase:
+      host: "" # TODO: Fill from terraform output – rds_keycloak_endpoint
+      port: 5432
+      database: keycloak
+      existingSecret: keycloak-db-credentials
+      existingSecretPasswordKey: password
+
+    # KC-004: Proxy mode for ALB TLS termination
+    proxy: edge
+    # KC-005: Serve Keycloak at root path
+    httpRelativePath: /
+    # KC-006: Production mode (strict hostname, HTTPS enforcement)
+    production: true
+
+    # KC-010: Pin to system node pool
+    nodeSelector:
+      scheduling.coder.com/pool: system
+    # KC-011: Tolerate system-node taint
+    tolerations:
+      - key: CriticalAddonsOnly
+        operator: Exists
+        effect: NoSchedule
+
+    # KC-012 → KC-016: ALB Ingress for sso.coder4gov.com
+    ingress:
+      enabled: true
+      ingressClassName: alb
+      hostname: sso.coder4gov.com
+      annotations:
+        alb.ingress.kubernetes.io/scheme: internet-facing
+        alb.ingress.kubernetes.io/target-type: ip
+        alb.ingress.kubernetes.io/certificate-arn: "" # TODO: Fill from terraform output – acm_wildcard_cert_arn
+        alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+        alb.ingress.kubernetes.io/wafv2-acl-arn: "" # TODO: Fill from terraform output – waf_acl_arn

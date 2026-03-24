@@ -1,0 +1,41 @@
+# PROV-001 → PROV-005: Coder External Provisioner HelmRelease
+# Dedicated provisioner daemon – manages Terraform workspace lifecycle
+# Runs on system nodes; communicates with Coder server via CODER_URL
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: coder-provisioner
+  namespace: coder
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: coder-provisioner
+      version: "2.*"
+      sourceRef:
+        kind: HelmRepository
+        name: coder
+        namespace: flux-system
+  values:
+    coder:
+      env:
+        # PROV-001: Provisioner connects back to the Coder control plane
+        - name: CODER_URL
+          value: "https://dev.coder4gov.com"
+
+      # PROV-002: IRSA for provisioner AWS operations (EC2, EBS, etc.)
+      serviceAccount:
+        annotations:
+          eks.amazonaws.com/role-arn: "" # TODO: Fill from terraform output – coder_provisioner_irsa_role_arn
+
+      # PROV-003: Two replicas for HA provisioning
+      replicaCount: 2
+
+      # PROV-004: Pin to system node pool
+      nodeSelector:
+        scheduling.coder.com/pool: system
+      # PROV-005: Tolerate system-node taint
+      tolerations:
+        - key: CriticalAddonsOnly
+          operator: Exists
+          effect: NoSchedule

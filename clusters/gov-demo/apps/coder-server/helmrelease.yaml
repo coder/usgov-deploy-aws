@@ -1,0 +1,83 @@
+# CDR-001 → CDR-018: Coder Server HelmRelease
+# Primary Coder deployment – control plane for cloud development environments
+# Runs on system node pool with CriticalAddonsOnly toleration
+# Ingress via AWS ALB with WAF and ACM wildcard certificate
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: coder
+  namespace: coder
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: coder
+      version: "2.*"
+      sourceRef:
+        kind: HelmRepository
+        name: coder
+        namespace: flux-system
+  values:
+    coder:
+      env:
+        # CDR-002: Access URL and wildcard for subdomain-based workspace routing
+        - name: CODER_ACCESS_URL
+          value: "https://dev.coder4gov.com"
+        - name: CODER_WILDCARD_ACCESS_URL
+          value: "*.dev.coder4gov.com"
+        # CDR-003: PostgreSQL connection via ExternalSecret-managed credential
+        - name: CODER_PG_CONNECTION_URL
+          valueFrom:
+            secretKeyRef:
+              name: coder-db-credentials
+              key: url
+        # CDR-006: Disable telemetry for GovCloud compliance
+        - name: CODER_TELEMETRY_ENABLE
+          value: "false"
+        # CDR-008: Enforce subdomain-only apps (no path-based routing)
+        - name: CODER_DISABLE_PATH_APPS
+          value: "true"
+        # CDR-009: HSTS header – 2-year max-age
+        - name: CODER_STRICT_TRANSPORT_SECURITY
+          value: "max-age=63072000"
+        # CDR-010: Audit logging enabled for compliance
+        - name: CODER_AUDIT_LOGGING
+          value: "true"
+        # CDR-011: Allow CLI and browser access
+        - name: CODER_BROWSER_ONLY
+          value: "false"
+        # CDR-018: Enable all experimental features
+        - name: CODER_EXPERIMENTS
+          value: "*"
+
+      # CDR-004: IRSA service account for AWS API access (S3, ECR, etc.)
+      serviceAccount:
+        annotations:
+          eks.amazonaws.com/role-arn: "" # TODO: Fill from terraform output – coder_server_irsa_role_arn
+
+      # CDR-005: ClusterIP service – traffic routed through ALB Ingress
+      service:
+        type: ClusterIP
+
+      # CDR-007: ALB Ingress with WAF, ACM TLS termination, and health checks
+      ingress:
+        enable: true
+        className: alb
+        annotations:
+          alb.ingress.kubernetes.io/scheme: internet-facing
+          alb.ingress.kubernetes.io/target-type: ip
+          alb.ingress.kubernetes.io/certificate-arn: "" # TODO: Fill from terraform output – acm_wildcard_cert_arn
+          alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+          alb.ingress.kubernetes.io/ssl-redirect: "443"
+          alb.ingress.kubernetes.io/wafv2-acl-arn: "" # TODO: Fill from terraform output – waf_acl_arn
+          alb.ingress.kubernetes.io/healthcheck-path: /healthz
+        host: dev.coder4gov.com
+
+      # CDR-012: Pin to system node pool
+      nodeSelector:
+        scheduling.coder.com/pool: system
+      # CDR-013: Tolerate system-node taint
+      tolerations:
+        - key: CriticalAddonsOnly
+          operator: Exists
+          effect: NoSchedule

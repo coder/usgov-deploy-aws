@@ -1,0 +1,9 @@
+# Coder v2 Helm chart repository
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: coder
+  namespace: flux-system
+spec:
+  interval: 1h
+  url: https://helm.coder.com/v2

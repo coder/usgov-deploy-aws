@@ -1,0 +1,8 @@
+# FluxCD Infrastructure Kustomization for coder4gov.com
+# Reconciled after FluxCD bootstrap on EKS cluster: coder4gov-eks
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespaces.yaml
+  - sources/
+  - secrets/

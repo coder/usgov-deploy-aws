@@ -1,0 +1,8 @@
+# HelmRepository sources for all Helm charts used by coder4gov.com
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - coder.yaml
+  - coder-observability.yaml
+  - bitnami.yaml
+  - litellm.yaml

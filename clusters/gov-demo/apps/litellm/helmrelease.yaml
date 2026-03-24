@@ -1,0 +1,78 @@
+# AI-001 → AI-010: LiteLLM AI Gateway HelmRelease
+# Multi-model proxy – routes to Bedrock (Claude), OpenAI, and Gemini
+# OCI-based chart from ghcr.io/berriai/litellm-helm
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: litellm
+  namespace: litellm
+spec:
+  interval: 30m
+  chart:
+    spec:
+      chart: litellm-helm
+      version: "0.*"
+      sourceRef:
+        kind: HelmRepository
+        name: litellm
+        namespace: flux-system
+  values:
+    # AI-002: IRSA for AWS Bedrock API access (Claude models)
+    serviceAccount:
+      annotations:
+        eks.amazonaws.com/role-arn: "" # TODO: Fill from terraform output – litellm_irsa_role_arn
+
+    # AI-005: Replica count and autoscaling
+    replicaCount: 2
+    autoscaling:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 5
+      targetCPUUtilizationPercentage: 70
+
+    # AI-006: Database connection for request logging and caching
+    env:
+      - name: DATABASE_URL
+        valueFrom:
+          secretKeyRef:
+            name: litellm-db-credentials
+            key: url
+
+    # AI-007: Pin to system node pool
+    nodeSelector:
+      scheduling.coder.com/pool: system
+    # AI-008: Tolerate system-node taint
+    tolerations:
+      - key: CriticalAddonsOnly
+        operator: Exists
+        effect: NoSchedule
+
+    masterKeyExistingSecret: "" # TODO: Optional – set to secret name if master key auth is desired
+
+    # AI-009, AI-010: Model routing configuration
+    config:
+      model_list:
+        # Bedrock models – authenticated via IRSA (no API key needed)
+        - model_name: "claude-sonnet"
+          litellm_params:
+            model: "bedrock/us.anthropic.claude-sonnet-4-6"
+        - model_name: "claude-opus"
+          litellm_params:
+            model: "bedrock/us.anthropic.claude-opus-4-6-v1"
+        - model_name: "claude-haiku"
+          litellm_params:
+            model: "bedrock/us.anthropic.claude-haiku-4-5-20251001-v1:0"
+        # OpenAI models – key from ExternalSecret litellm-api-keys
+        - model_name: "gpt-4o"
+          litellm_params:
+            model: "openai/gpt-4o"
+            api_key_env: "OPENAI_API_KEY"
+        - model_name: "o4-mini"
+          litellm_params:
+            model: "openai/o4-mini"
+            api_key_env: "OPENAI_API_KEY"
+        # Gemini model – key from ExternalSecret litellm-api-keys
+        - model_name: "gemini-2.5-pro"
+          litellm_params:
+            model: "gemini/gemini-2.5-pro"
+            api_key_env: "GEMINI_API_KEY"
