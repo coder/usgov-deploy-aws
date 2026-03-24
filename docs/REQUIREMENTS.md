@@ -258,7 +258,7 @@ The single-region IaC is structured to make this additive, not a rewrite.
 
 | ID | Requirement | Priority |
 |---|---|---|
-| GL-001 | GitLab CE **shall** be deployed on EC2 via Omnibus. | Must |
+| GL-001 | GitLab CE **shall** be deployed on EC2 (`m7a.2xlarge` — 8 vCPU / 32 GiB, AMD) via Omnibus. | Must |
 | GL-002 | EC2 **shall** run AL2023 or RHEL 9 with FIPS kernel. | Must |
 | GL-003 | Bundled PostgreSQL and Redis (single-instance demo). | Must |
 | GL-004 | S3 for object storage (LFS, artifacts, backups). | Must |
@@ -267,7 +267,7 @@ The single-region IaC is structured to make this additive, not a rewrite.
 | GL-007 | OIDC provider for Coder. | Must |
 | GL-008 | Daily backups to S3, 30-day retention. | Must |
 | GL-009 | A GitLab Runner **shall** be registered on the same EC2 instance. | Must |
-| GL-010 | Runner **shall** use a Docker executor for CI jobs. | Must |
+| GL-010 | Runner **shall** use a Docker executor on the same EC2 host for CI jobs. | Must |
 | GL-011 | Runner **should** be able to build + push images to ECR. | Should |
 | GL-012 | K8s-based runner on EKS **may** be added later. | May |
 | GL-013 | Host OS **should** be STIG-hardened (best-effort). | Should |
@@ -289,6 +289,7 @@ The single-region IaC is structured to make this additive, not a rewrite.
 | REG-001 | ECR **shall** be the container registry. | Must |
 | REG-002 | Image scanning **shall** be enabled. | Must |
 | REG-003 | Lifecycle policies **should** retain last 30 tagged images. | Should |
+| REG-004 | A custom FIPS workspace base image **shall** be built via GitLab CI and pushed to ECR. | Must |
 
 ### 6.11 Observability
 
@@ -381,12 +382,22 @@ gov.demo.coder.com/
 
 ---
 
-## 8. Open Items
+## 8. Resolved Items (formerly open)
+
+| # | Item | Resolution |
+|---|---|---|
+| 1 | DNS delegation | SE owns this. Script at `docs/dns-delegation.sh`. Run after `1-network` terraform apply. |
+| 2 | Bedrock model access | SE enables in console. Instructions at `docs/BEDROCK_SETUP.md`. |
+| 3 | OpenAI + Gemini API keys | SE has keys. Store in AWS Secrets Manager during `2-data` terraform apply. |
+| 4 | GitLab EC2 instance size | `m7a.2xlarge` (8 vCPU / 32 GiB, AMD EPYC). GitLab Omnibus ~8 GB + Docker runner builds get the rest. Runner executes on the same host. ~$0.46/hr on-demand, ~$338/mo. |
+| 5 | Workspace base image | Custom FIPS image built via GitLab CI, pushed to ECR. Base: RHEL 9 UBI or AL2023 with FIPS-validated OpenSSL. |
+
+---
+
+## 9. Open Items
 
 | # | Item | Status |
 |---|---|---|
-| 1 | Google Cloud DNS NS delegation — who creates the NS records on the `demo.coder.com` zone? | Open |
-| 2 | Bedrock model access — ensure Anthropic models are enabled in us-west-2 Bedrock console | Open |
-| 3 | OpenAI + Gemini API keys — who provisions these, and what spend limits? | Open |
-| 4 | GitLab EC2 instance size (t3.xlarge? m5.large?) | Open |
-| 5 | Coder workspace base image — use `codercom/enterprise-base:ubuntu` or custom? | Open |
+| 1 | OpenAI + Gemini spend caps — any budget limits to configure in LiteLLM? | Open |
+| 2 | Custom FIPS workspace image — Dockerfile scope (which languages, tools, SDKs?) | Open |
+| 3 | Coder template set — which templates to ship on day 1? | Open |
