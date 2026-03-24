@@ -53,7 +53,8 @@ All requirements use **shall** (mandatory), **should** (recommended), or
 | **Karpenter** | EKS | Workspace node scaling |
 | **LiteLLM + AI Bridge** | EKS | AI coding demo hook — Bedrock, OpenAI, Gemini |
 | **FluxCD** (OSS) | EKS | GitOps — low maintenance once bootstrapped |
-| **GitLab CE** (Omnibus + Docker Runner) | EC2 | Git source-of-truth, OIDC provider, CI |
+| **Keycloak** | EKS | Central SSO (OIDC) for all services |
+| **GitLab CE** (Omnibus + Docker Runner) | EC2 | Git source-of-truth, CI |
 | **coder-observability** | EKS | Prometheus + Grafana + Loki in one chart |
 | **External Secrets Operator** | EKS | AWS Secrets Manager → K8s Secrets |
 | **Istio** (sidecar mode) | EKS | mTLS for all Coder east-west traffic |
@@ -63,7 +64,6 @@ All requirements use **shall** (mandatory), **should** (recommended), or
 | Cut | Replaced By | Rationale |
 |---|---|---|
 | Vault | AWS Secrets Manager + ESO | Zero ops |
-| Keycloak | GitLab CE built-in OIDC | One less service |
 | Harbor | Amazon ECR | Native, zero maintenance |
 | Nexus OSS | Deferred | Add only if a demo calls for it |
 
@@ -106,7 +106,7 @@ The single-region IaC is structured to make this additive, not a rewrite.
 
 ```mermaid
 graph TB
-    R53["Route 53: gov.demo.coder.com<br/>dev. → Coder NLB<br/>*.dev. → Coder workspaces<br/>gitlab. → GitLab NLB<br/>grafana.dev. → Grafana NLB"]
+    R53["Route 53: gov.demo.coder.com<br/>dev. → Coder NLB<br/>*.dev. → Coder workspaces<br/>gitlab. → GitLab NLB<br/>sso. → Keycloak NLB<br/>grafana.dev. → Grafana NLB"]
 
     subgraph REGION["us-west-2 · multi-AZ"]
         subgraph VPC["VPC"]
@@ -119,10 +119,11 @@ graph TB
                 OBS["coder-observability<br/>Prom / Grafana / Loki"]
                 ISTIO["Istio · sidecar<br/>mTLS STRICT"]
                 KARP["Karpenter<br/>workspace nodes"]
+                KC["Keycloak<br/>SSO / OIDC"]
             end
 
             GITLAB["GitLab CE · EC2 m7a.2xlarge<br/>+ Docker Runner"]
-            RDS[("RDS PG 15 · multi-AZ<br/>Coder DB + LiteLLM DB")]
+            RDS[("RDS PG 15 · multi-AZ<br/>Coder + LiteLLM + Keycloak DBs")]
             ECR["ECR"]
             SM["Secrets Manager"]
             S3[("S3<br/>logs · backups")]
@@ -133,10 +134,15 @@ graph TB
     R53 --> CODERD
     R53 --> GITLAB
     R53 --> OBS
+    R53 --> KC
+    KC -- "OIDC" --> CODERD
+    KC -- "OIDC" --> GITLAB
+    KC -- "OIDC" --> OBS
     GITLAB -- "GitOps" --> FLUX
     FLUX -- "reconciles" --> EKS
     CODERD --> RDS
     LITELLM --> RDS
+    KC --> RDS
     ESO --> SM
     OBS --> S3
     GITLAB --> S3
@@ -211,7 +217,7 @@ graph TB
 | CDR-001 | Coderd **shall** run on EKS via the official Helm chart. **The deployment shall use the latest RC release** to enable Coder Agents (`CODER_EXPERIMENTS=agents`). See [Coder Agents Early Access](https://coder.com/docs/ai-coder/agents/early-access). | Must |
 | CDR-002 | Coderd **shall** be exposed via NLB + ACM TLS at `dev.gov.demo.coder.com`. | Must |
 | CDR-003 | Database: RDS PostgreSQL 15+, multi-AZ, automated backups, 7-day retention. LiteLLM shares the same RDS instance (separate database). | Must |
-| CDR-004 | Auth via GitLab CE OIDC (`gitlab.gov.demo.coder.com`). | Must |
+| CDR-004 | Auth via Keycloak OIDC (`sso.gov.demo.coder.com`). | Must |
 | CDR-005 | Workspaces **shall** schedule on Karpenter NodePools. | Must |
 | CDR-006 | AI Bridge **shall** be enabled. | Must |
 | CDR-007 | The `coder-observability` chart **shall** be deployed. | Must |
@@ -256,7 +262,7 @@ graph TB
 | GL-004 | S3 for object storage (LFS, artifacts, backups). | Must |
 | GL-005 | NLB + ACM TLS at `gitlab.gov.demo.coder.com`. | Must |
 | GL-006 | Git source-of-truth for FluxCD + Coder templates. | Must |
-| GL-007 | OIDC provider for Coder. | Must |
+| GL-007 | GitLab **shall** authenticate users via Keycloak OIDC (replacing local username/password). | Must |
 | GL-008 | Daily backups to S3, 30-day retention. | Must |
 | GL-009 | A GitLab Runner **shall** be registered on the same EC2 instance. | Must |
 | GL-010 | Runner **shall** use a Docker executor on the same EC2 host for CI jobs. | Must |
@@ -291,21 +297,35 @@ graph TB
 | OBS-002 | Loki **shall** use S3 for log storage. | Must |
 | OBS-003 | Grafana Agent **shall** run as DaemonSet on all nodes. | Must |
 | OBS-004 | Grafana **should** be exposed via NLB + TLS at `grafana.dev.gov.demo.coder.com`. | Should |
+| OBS-005 | Grafana **should** authenticate users via Keycloak OIDC. | Should |
 
-### 6.12 Istio (Service Mesh / mTLS)
+### 6.12 Keycloak (SSO / Identity Provider)
+
+| ID | Requirement | Priority |
+|---|---|---|
+| KC-001 | Keycloak **shall** be deployed on EKS via the Bitnami Helm chart, managed by FluxCD. | Must |
+| KC-002 | Keycloak **shall** use the shared RDS instance (separate database). | Must |
+| KC-003 | Keycloak **shall** be exposed via NLB + ACM TLS at `sso.gov.demo.coder.com`. | Must |
+| KC-004 | A single realm (`gov-demo`) **shall** be configured with OIDC clients for: Coder, GitLab, Grafana. | Must |
+| KC-005 | Users **shall** be managed locally in Keycloak (no LDAP/AD for demo). | Must |
+| KC-006 | Keycloak **should** enforce MFA (TOTP) for all users. | Should |
+| KC-007 | Keycloak **should** be configured with an X.509 client cert auth flow (PIV/CAC simulation) for demo purposes. | Should |
+| KC-008 | The `keycloak` namespace **shall** be labeled `istio-injection=enabled` for mTLS. | Must |
+
+### 6.13 Istio (Service Mesh / mTLS)
 
 | ID | Requirement | Priority |
 |---|---|---|
 | MESH-001 | Istio **shall** be deployed via Helm (istio/base + istio/istiod), managed by FluxCD. | Must |
 | MESH-002 | Istio **shall** use sidecar mode (not ambient) for maturity and EKS compatibility. | Must |
-| MESH-003 | The `coder`, `coder-provisioner`, and `litellm` namespaces **shall** be labeled `istio-injection=enabled`. | Must |
+| MESH-003 | The `coder`, `coder-provisioner`, `litellm`, and `keycloak` namespaces **shall** be labeled `istio-injection=enabled`. | Must |
 | MESH-004 | A `PeerAuthentication` with `mode: STRICT` **shall** be applied to all mesh-enrolled namespaces. | Must |
 | MESH-005 | `istio-system`, `kube-system`, `flux-system`, and `karpenter` namespaces **shall NOT** be in the mesh. | Must |
 | MESH-006 | Istio Ingress Gateway **may** replace NLB for north-south if beneficial; otherwise NLB direct with mesh east-west only. | May |
 | MESH-007 | Istio **shall** be scoped to mTLS only — no VirtualService routing or traffic splitting initially. | Must |
 | MESH-008 | Kiali **may** be deployed for mesh visualization. | May |
 
-### 6.13 Security & Compliance
+### 6.14 Security & Compliance
 
 | ID | Requirement | Priority |
 |---|---|---|
@@ -319,7 +339,7 @@ graph TB
 | SEC-008 | EC2 host OS **should** be STIG-hardened (best-effort). | Should |
 | SEC-009 | EKS nodes **should** use Bottlerocket FIPS AMIs. | Should |
 
-### 6.14 Bootstrap & Repo Structure
+### 6.15 Bootstrap & Repo Structure
 
 | ID | Requirement | Priority |
 |---|---|---|
@@ -384,6 +404,7 @@ gov.demo.coder.com/
 | SM-001 – 004 | Secrets | AWS Secrets Manager docs |
 | REG-001 – 003 | Registry | ECR docs |
 | OBS-001 – 004 | Observability | ai.coder.com |
+| KC-001 – 008 | Keycloak / SSO | Keycloak docs, OIDC best practices |
 | MESH-001 – 008 | Istio / mTLS | Istio docs, EKS best practices |
 | SEC-001 – 009 | Security | FIPS 140-2/3, DISA STIG |
 | BOOT-001 – 007 | Bootstrap | FluxCD docs |
@@ -404,6 +425,7 @@ gov.demo.coder.com/
 | 8 | Coder version | **Latest RC release** required for Coder Agents feature (`CODER_EXPERIMENTS=agents`). |
 | 9 | Coder FIPS build | Build Coder from source with `GOFIPS140=latest` (Go 1.24+ native FIPS 140-3). No cgo/BoringSSL needed. See `docs/CODER_FIPS_BUILD.md`. |
 | 10 | Istio | Sidecar mode, mTLS STRICT on Coder/LiteLLM namespaces only. East-west encryption. No traffic management features initially. |
+| 11 | Keycloak | Added back as central SSO. OIDC for Coder, GitLab, Grafana. Local users, optional MFA/PIV. Shares RDS. `sso.gov.demo.coder.com`. |
 
 ---
 

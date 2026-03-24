@@ -15,6 +15,7 @@ GovCloud-flavored demo environment for [Coder](https://coder.com). Single-region
 | FluxCD (OSS) | EKS | GitOps reconciliation from GitLab CE |
 | Istio (sidecar) | EKS | mTLS on all Coder east-west traffic |
 | coder-observability | EKS | Prometheus + Grafana + Loki |
+| Keycloak | EKS | Central SSO (OIDC) for Coder, GitLab, Grafana |
 | External Secrets Operator | EKS | AWS Secrets Manager → K8s Secrets |
 | GitLab CE + Docker Runner | EC2 (m7a.2xlarge) | Git source-of-truth, OIDC IdP, CI/CD |
 
@@ -25,7 +26,7 @@ GovCloud-flavored demo environment for [Coder](https://coder.com). Single-region
   RHEL 9 UBI with `crypto-policies FIPS`; all AWS APIs use FIPS endpoints
 - **FluxCD over ArgoCD** — pull-based, no UI attack surface, Git-native RBAC
 - **Istio mTLS** — STRICT PeerAuthentication on Coder/LiteLLM namespaces
-- **GitLab CE as IdP** — built-in OIDC replaces Keycloak
+- **Keycloak as central SSO** — OIDC for Coder, GitLab, Grafana; optional MFA/PIV
 - **AWS managed services** — Secrets Manager (not Vault), ECR (not Harbor),
   NAT Gateway (not fck-nat), RDS multi-AZ
 - **GovCloud-portable** — all config parameterized; flip `aws_region` to
@@ -41,7 +42,8 @@ graph TB
         subgraph EKS["EKS: gov-demo"]
             C[Coder coderd] --- P[Coder provisioner]
             L[LiteLLM] --- F[FluxCD]
-            I[Istio mTLS] --- O[coder-observability]
+            KC[Keycloak SSO] --- I[Istio mTLS]
+            O[coder-observability] --- ESO[Ext Secrets]
             ESO[Ext Secrets] --- K[Karpenter]
         end
         GL[GitLab CE · EC2]
@@ -52,7 +54,8 @@ graph TB
 
     AWS[Secrets Mgr · KMS]
 
-    DNS --> C & GL & O
+    DNS --> C & GL & O & KC
+    KC -- OIDC --> C & GL & O
     GL -- GitOps --> F --> EKS
     C & L --> RDS
     ESO --> AWS
@@ -98,6 +101,7 @@ Base domain: `gov.demo.coder.com` (delegated from Google Cloud DNS → Route 53)
 | `dev.gov.demo.coder.com` | Coder |
 | `*.dev.gov.demo.coder.com` | Coder workspaces |
 | `gitlab.gov.demo.coder.com` | GitLab CE |
+| `sso.gov.demo.coder.com` | Keycloak SSO |
 | `grafana.dev.gov.demo.coder.com` | Grafana |
 
 ## AI Models (via LiteLLM)
@@ -128,4 +132,4 @@ flowchart LR
 ## Requirements
 
 See [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) for the full specification
-(~100 shall/should statements across 14 categories with traceability matrix).
+(~100 shall/should statements across 15 categories with traceability matrix).
