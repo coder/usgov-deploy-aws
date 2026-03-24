@@ -2,7 +2,7 @@
 
 **Project:** gov.demo.coder.com
 **Classification:** Unclassified — For Demo/Reference Use
-**Version:** 0.4.0-DRAFT
+**Version:** 0.5.0-DRAFT
 **Date:** 2025-03-24
 
 ---
@@ -27,21 +27,37 @@ All requirements use **shall** (mandatory), **should** (recommended), or
 
 ---
 
-## 2. Scope
+## 2. Resolved Decisions
 
-### 2.1 What's In
+| # | Decision | Resolution |
+|---|---|---|
+| 1 | **Domain** | Base: `gov.demo.coder.com`. Subdomains: `dev.` (Coder), `grafana.dev.` (Grafana), `gitlab.` (GitLab), `flux.` (FluxCD UI if added), etc. |
+| 2 | **DNS Delegation** | `demo.coder.com` is owned by Google Cloud DNS. A delegation NS record for `gov.demo.coder.com` shall point to an AWS Route 53 hosted zone. All records below that zone are managed in R53. |
+| 3 | **Coder License** | Premium + AI Add-On, up to 50 users. External provisioners, workspace proxies, and AI Bridge are all available. |
+| 4 | **Bedrock Models** | Claude Sonnet 4.6 (`us.anthropic.claude-sonnet-4-6`), Claude Opus 4.6 (`us.anthropic.claude-opus-4-6-v1`), Claude Haiku 4.5 (`us.anthropic.claude-haiku-4-5-20251001-v1:0`) |
+| 5 | **External Providers** | LiteLLM shall also connect to OpenAI (GPT-4o, o4-mini) and Google Gemini (gemini-2.5-pro) via API key. |
+| 6 | **NAT** | AWS NAT Gateway (zero-ops). fck-nat is not recommended. |
+| 7 | **GitLab Runner** | Docker executor on the GitLab EC2 instance. |
+| 8 | **LiteLLM DB** | Share Coder's RDS instance (separate database on same RDS). |
+| 9 | **FluxCD** | OSS. |
+
+---
+
+## 3. Scope
+
+### 3.1 What's In
 
 | Component | Where | Why |
 |---|---|---|
 | **Coder** (coderd + provisioners) | EKS | The product being demoed |
 | **Karpenter** | EKS | Workspace node scaling |
-| **LiteLLM + AI Bridge** | EKS | AI coding demo hook |
-| **FluxCD** | EKS | GitOps — low maintenance once bootstrapped |
-| **GitLab CE** (Omnibus + Runner) | EC2 | Git source-of-truth, OIDC provider, CI |
+| **LiteLLM + AI Bridge** | EKS | AI coding demo hook — Bedrock, OpenAI, Gemini |
+| **FluxCD** (OSS) | EKS | GitOps — low maintenance once bootstrapped |
+| **GitLab CE** (Omnibus + Docker Runner) | EC2 | Git source-of-truth, OIDC provider, CI |
 | **coder-observability** | EKS | Prometheus + Grafana + Loki in one chart |
 | **External Secrets Operator** | EKS | AWS Secrets Manager → K8s Secrets |
 
-### 2.2 What's Cut
+### 3.2 What's Cut
 
 | Cut | Replaced By | Rationale |
 |---|---|---|
@@ -49,9 +65,8 @@ All requirements use **shall** (mandatory), **should** (recommended), or
 | Keycloak | GitLab CE built-in OIDC | One less service |
 | Harbor | Amazon ECR | Native, zero maintenance |
 | Nexus OSS | Deferred | Add only if a demo calls for it |
-| Second region (us-east-1) | Deferred | Add proxy + provisioners later without refactor |
 
-### 2.3 GovCloud Portability
+### 3.3 GovCloud Portability
 
 | Parameter | Default | GovCloud Override |
 |---|---|---|
@@ -61,7 +76,7 @@ All requirements use **shall** (mandatory), **should** (recommended), or
 
 No code changes — only `terraform.tfvars`.
 
-### 2.4 Multi-Region Fast-Follow
+### 3.4 Multi-Region Fast-Follow
 
 When a demo requires two regions, add:
 - `us-east-1` VPC + EKS cluster + Karpenter + FluxCD
@@ -74,7 +89,7 @@ The single-region IaC is structured to make this additive, not a rewrite.
 
 ---
 
-## 3. Trade Study: FluxCD vs ArgoCD
+## 4. Trade Study: FluxCD vs ArgoCD
 
 | Criterion | FluxCD | ArgoCD |
 |---|---|---|
@@ -82,15 +97,21 @@ The single-region IaC is structured to make this additive, not a rewrite.
 | Maintenance | Low — set and forget | Medium — UI, Redis, app-of-apps |
 | Bootstrap | Terraform provider or CLI | kubectl + ArgoCD CLI |
 
-**Decision: FluxCD** — minimal attack surface, minimal maintenance.
+**Decision: FluxCD OSS** — minimal attack surface, minimal maintenance.
 
 ---
 
-## 4. Architecture
+## 5. Architecture
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
 │                    us-west-2 (multi-AZ)                        │
+│                                                                │
+│  Route 53: gov.demo.coder.com (delegated from GCloud DNS)     │
+│    dev.gov.demo.coder.com        → Coder NLB                  │
+│    *.dev.gov.demo.coder.com      → Coder NLB (workspaces)     │
+│    gitlab.gov.demo.coder.com     → GitLab NLB                 │
+│    grafana.dev.gov.demo.coder.com→ Grafana NLB                │
 │                                                                │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │                     VPC (2+ AZs)                          │  │
@@ -100,11 +121,13 @@ The single-region IaC is structured to make this additive, not a rewrite.
 │  │  │                                                    │  │  │
 │  │  │  ┌────────────┐ ┌────────────┐ ┌───────────────┐  │  │  │
 │  │  │  │ Coder      │ │ Coder      │ │ LiteLLM       │  │  │  │
-│  │  │  │ coderd     │ │ provisioner│ │ (AI Gateway)  │  │  │  │
+│  │  │  │ coderd     │ │ provisioner│ │ → Bedrock      │  │  │  │
+│  │  │  │            │ │ (external) │ │ → OpenAI       │  │  │  │
+│  │  │  │            │ │            │ │ → Gemini       │  │  │  │
 │  │  │  └────────────┘ └────────────┘ └───────────────┘  │  │  │
 │  │  │  ┌────────────┐ ┌────────────┐ ┌───────────────┐  │  │  │
 │  │  │  │ FluxCD     │ │ ExtSecrets │ │ coder-observe │  │  │  │
-│  │  │  │            │ │ Operator   │ │ (Prom/Graf/   │  │  │  │
+│  │  │  │ (OSS)      │ │ Operator   │ │ (Prom/Graf/   │  │  │  │
 │  │  │  │            │ │            │ │  Loki)        │  │  │  │
 │  │  │  └────────────┘ └────────────┘ └───────────────┘  │  │  │
 │  │  │  ┌──────────────────────────────────────────────┐  │  │  │
@@ -115,8 +138,9 @@ The single-region IaC is structured to make this additive, not a rewrite.
 │  │  ┌─────────────┐ ┌──────────────┐ ┌─────────────────┐  │  │
 │  │  │ GitLab CE   │ │ RDS PG 15    │ │ ECR             │  │  │
 │  │  │ (EC2)       │ │ (multi-AZ)   │ │                 │  │  │
-│  │  │ + Runner    │ └──────────────┘ └─────────────────┘  │  │
-│  │  └─────────────┘                                        │  │
+│  │  │ + Docker    │ │ Coder DB +   │ └─────────────────┘  │  │
+│  │  │   Runner    │ │ LiteLLM DB   │                      │  │
+│  │  └─────────────┘ └──────────────┘                      │  │
 │  │  ┌─────────────┐ ┌──────────────┐ ┌─────────────────┐  │  │
 │  │  │ Secrets Mgr │ │ S3           │ │ KMS             │  │  │
 │  │  └─────────────┘ │ (logs, bkup) │ │ (FIPS 140-3)   │  │  │
@@ -131,9 +155,9 @@ The single-region IaC is structured to make this additive, not a rewrite.
 
 ---
 
-## 5. Requirements
+## 6. Requirements
 
-### 5.1 Infrastructure
+### 6.1 Infrastructure
 
 | ID | Requirement | Priority |
 |---|---|---|
@@ -143,14 +167,14 @@ The single-region IaC is structured to make this additive, not a rewrite.
 | INFRA-004 | All data at rest **shall** be encrypted via KMS (SSE-KMS). | Must |
 | INFRA-005 | All data in transit **shall** use TLS 1.2+. | Must |
 | INFRA-006 | Infrastructure **shall** be Terraform, stored in gov.demo.coder.com. | Must |
-| INFRA-007 | The VPC **shall** use private subnets + NAT for outbound. | Must |
+| INFRA-007 | The VPC **shall** use private subnets + AWS NAT Gateway for outbound. | Must |
 | INFRA-008 | The VPC **shall** span ≥2 AZs. | Must |
 | INFRA-009 | Security groups **shall** follow least-privilege. | Must |
-| INFRA-010 | Route 53 **shall** manage DNS; ACM **shall** provision TLS certs. | Must |
+| INFRA-010 | Route 53 **shall** host the `gov.demo.coder.com` zone. Google Cloud DNS for `demo.coder.com` **shall** delegate via NS records. ACM **shall** provision TLS certs. | Must |
 | INFRA-011 | Elastic IPs **should** be allocated for stable ingress. | Should |
 | INFRA-012 | Terraform state **shall** be in S3 + DynamoDB, KMS-encrypted. | Must |
 
-### 5.2 EKS Cluster
+### 6.2 EKS Cluster
 
 | ID | Requirement | Priority |
 |---|---|---|
@@ -164,7 +188,7 @@ The single-region IaC is structured to make this additive, not a rewrite.
 | EKS-008 | A "system" managed node group **shall** run platform workloads. | Must |
 | EKS-009 | Default StorageClass: EBS CSI gp3, encrypted, `WaitForFirstConsumer`. | Must |
 
-### 5.3 Karpenter
+### 6.3 Karpenter
 
 | ID | Requirement | Priority |
 |---|---|---|
@@ -177,11 +201,11 @@ The single-region IaC is structured to make this additive, not a rewrite.
 | KARP-007 | Image-prefetch DaemonSet **should** warm base images. | Should |
 | KARP-008 | Subnet/SG discovery via `karpenter.sh/discovery` tags. | Must |
 
-### 5.4 FluxCD
+### 6.4 FluxCD
 
 | ID | Requirement | Priority |
 |---|---|---|
-| FLUX-001 | FluxCD **shall** be the sole GitOps engine. | Must |
+| FLUX-001 | FluxCD OSS **shall** be the sole GitOps engine. | Must |
 | FLUX-002 | FluxCD **shall** be bootstrapped via Terraform provider targeting GitLab CE. | Must |
 | FLUX-003 | Source-of-truth: gov.demo.coder.com on GitLab CE, path `clusters/gov-demo/`. | Must |
 | FLUX-004 | Controllers: source, kustomize, helm, notification. | Must |
@@ -189,23 +213,23 @@ The single-region IaC is structured to make this additive, not a rewrite.
 | FLUX-006 | `dependsOn` **shall** enforce infra-before-apps. | Must |
 | FLUX-007 | Git auth via SSH keys. | Must |
 
-### 5.5 Coder
+### 6.5 Coder
 
 | ID | Requirement | Priority |
 |---|---|---|
 | CDR-001 | Coderd **shall** run on EKS via the official Helm chart. | Must |
-| CDR-002 | Coderd **shall** be exposed via NLB + ACM TLS. | Must |
-| CDR-003 | Database: RDS PostgreSQL 15+, multi-AZ, automated backups, 7-day retention. | Must |
-| CDR-004 | Auth via GitLab CE OIDC. | Must |
+| CDR-002 | Coderd **shall** be exposed via NLB + ACM TLS at `dev.gov.demo.coder.com`. | Must |
+| CDR-003 | Database: RDS PostgreSQL 15+, multi-AZ, automated backups, 7-day retention. LiteLLM shares the same RDS instance (separate database). | Must |
+| CDR-004 | Auth via GitLab CE OIDC (`gitlab.gov.demo.coder.com`). | Must |
 | CDR-005 | Workspaces **shall** schedule on Karpenter NodePools. | Must |
 | CDR-006 | AI Bridge **shall** be enabled. | Must |
-| CDR-007 | `coder-observability` **shall** be deployed. | Must |
+| CDR-007 | The `coder-observability` chart **shall** be deployed. | Must |
 | CDR-008 | Resource requests ≥1000m CPU / 2Gi memory. | Must |
 | CDR-009 | Pod topology spread **should** distribute across AZs. | Should |
 | CDR-010 | Templates **shall** be stored in GitLab CE, managed via Terraform. | Must |
 | CDR-011 | Templates **should** support both K8s and EC2 workspace types. | Should |
 
-### 5.6 Coder Provisioners
+### 6.6 Coder Provisioners
 
 | ID | Requirement | Priority |
 |---|---|---|
@@ -213,23 +237,24 @@ The single-region IaC is structured to make this additive, not a rewrite.
 | PROV-002 | Provisioners **shall** use IRSA (EC2ReadOnly + scoped provisioner policy). | Must |
 | PROV-003 | Provisioner key **shall** be stored in Secrets Manager, synced via ESO. | Must |
 | PROV-004 | Provisioners **should** run ≥2 replicas. | Should |
-| PROV-005 | If using external provisioners, coderd **shall** set `provisionerDaemons = 0`. | Must |
-| PROV-006 | Provisioners **may** use built-in coderd daemons instead of external if OSS license is used. | May |
+| PROV-005 | Coderd **shall** set `provisionerDaemons = 0` (external provisioners only, Premium license). | Must |
 
-### 5.7 AI Bridge + LiteLLM
+### 6.7 AI Bridge + LiteLLM
 
 | ID | Requirement | Priority |
 |---|---|---|
 | AI-001 | AI Bridge **shall** be enabled on coderd. | Must |
-| AI-002 | LiteLLM **shall** run on EKS via Helm. | Must |
-| AI-003 | LiteLLM **shall** integrate with Bedrock via IRSA. | Must |
-| AI-004 | Autoscaling: min 1, max 5, 80% CPU. | Must |
-| AI-005 | PostgreSQL for API key / usage tracking. | Must |
-| AI-006 | Anthropic + OpenAI-compatible endpoints. | Must |
-| AI-007 | Token usage + request metadata recording. | Must |
+| AI-002 | LiteLLM **shall** run on EKS via Helm as the upstream gateway for AI Bridge. | Must |
+| AI-003 | LiteLLM **shall** integrate with AWS Bedrock via IRSA for Claude models: Sonnet 4.6 (`us.anthropic.claude-sonnet-4-6`), Opus 4.6 (`us.anthropic.claude-opus-4-6-v1`), Haiku 4.5 (`us.anthropic.claude-haiku-4-5-20251001-v1:0`). | Must |
+| AI-004 | LiteLLM **shall** autoscale (min 1, max 5, 80% CPU). | Must |
+| AI-005 | PostgreSQL for API key / usage tracking (shared RDS, separate DB). | Must |
+| AI-006 | AI Bridge **shall** support Anthropic + OpenAI-compatible endpoints. | Must |
+| AI-007 | AI Bridge **shall** record token usage and request metadata. | Must |
 | AI-008 | Model config via FluxCD-managed ConfigMap. | Must |
+| AI-009 | LiteLLM **shall** connect to OpenAI (GPT-4o, o4-mini) via API key stored in Secrets Manager. | Must |
+| AI-010 | LiteLLM **shall** connect to Google Gemini (gemini-2.5-pro) via API key stored in Secrets Manager. | Must |
 
-### 5.8 GitLab CE + Runner
+### 6.8 GitLab CE + Runner
 
 | ID | Requirement | Priority |
 |---|---|---|
@@ -237,27 +262,27 @@ The single-region IaC is structured to make this additive, not a rewrite.
 | GL-002 | EC2 **shall** run AL2023 or RHEL 9 with FIPS kernel. | Must |
 | GL-003 | Bundled PostgreSQL and Redis (single-instance demo). | Must |
 | GL-004 | S3 for object storage (LFS, artifacts, backups). | Must |
-| GL-005 | NLB + ACM TLS. | Must |
+| GL-005 | NLB + ACM TLS at `gitlab.gov.demo.coder.com`. | Must |
 | GL-006 | Git source-of-truth for FluxCD + Coder templates. | Must |
 | GL-007 | OIDC provider for Coder. | Must |
 | GL-008 | Daily backups to S3, 30-day retention. | Must |
 | GL-009 | A GitLab Runner **shall** be registered on the same EC2 instance. | Must |
-| GL-010 | Runner **shall** use a shell or Docker executor for CI jobs. | Must |
+| GL-010 | Runner **shall** use a Docker executor for CI jobs. | Must |
 | GL-011 | Runner **should** be able to build + push images to ECR. | Should |
 | GL-012 | K8s-based runner on EKS **may** be added later. | May |
 | GL-013 | Host OS **should** be STIG-hardened (best-effort). | Should |
 | GL-014 | ASG (min 1, max 1) **should** provide self-healing. | Should |
 
-### 5.9 Secrets Management
+### 6.9 Secrets Management
 
 | ID | Requirement | Priority |
 |---|---|---|
-| SM-001 | AWS Secrets Manager **shall** store all sensitive values. | Must |
+| SM-001 | AWS Secrets Manager **shall** store all sensitive values (DB passwords, API keys, OAuth secrets, provisioner keys). | Must |
 | SM-002 | External Secrets Operator **shall** sync secrets into K8s. | Must |
 | SM-003 | No secrets in plain text in Git. | Must |
 | SM-004 | Secrets Manager **shall** use KMS encryption. | Must |
 
-### 5.10 Container Registry
+### 6.10 Container Registry
 
 | ID | Requirement | Priority |
 |---|---|---|
@@ -265,16 +290,16 @@ The single-region IaC is structured to make this additive, not a rewrite.
 | REG-002 | Image scanning **shall** be enabled. | Must |
 | REG-003 | Lifecycle policies **should** retain last 30 tagged images. | Should |
 
-### 5.11 Observability
+### 6.11 Observability
 
 | ID | Requirement | Priority |
 |---|---|---|
 | OBS-001 | `coder-observability` chart **shall** be deployed. | Must |
 | OBS-002 | Loki **shall** use S3 for log storage. | Must |
 | OBS-003 | Grafana Agent **shall** run as DaemonSet on all nodes. | Must |
-| OBS-004 | Grafana **should** be exposed via NLB + TLS. | Should |
+| OBS-004 | Grafana **should** be exposed via NLB + TLS at `grafana.dev.gov.demo.coder.com`. | Should |
 
-### 5.12 Security & Compliance
+### 6.12 Security & Compliance
 
 | ID | Requirement | Priority |
 |---|---|---|
@@ -288,7 +313,7 @@ The single-region IaC is structured to make this additive, not a rewrite.
 | SEC-008 | EC2 host OS **should** be STIG-hardened (best-effort). | Should |
 | SEC-009 | EKS nodes **should** use Bottlerocket FIPS AMIs. | Should |
 
-### 5.13 Bootstrap & Repo Structure
+### 6.13 Bootstrap & Repo Structure
 
 | ID | Requirement | Priority |
 |---|---|---|
@@ -303,11 +328,11 @@ gov.demo.coder.com/
 ├── infra/
 │   └── terraform/
 │       ├── 0-state/              # S3 backend + DynamoDB
-│       ├── 1-network/            # VPC, subnets, NAT, Route 53
-│       ├── 2-data/               # RDS, S3, KMS, Secrets Manager, ECR
+│       ├── 1-network/            # VPC, subnets, NAT GW, Route 53
+│       ├── 2-data/               # RDS (Coder DB + LiteLLM DB), S3, KMS, Secrets Mgr, ECR
 │       ├── 3-eks/                # EKS cluster, node groups, IRSA
 │       ├── 4-bootstrap/          # FluxCD + Karpenter
-│       └── 5-gitlab/             # GitLab CE EC2 + Runner
+│       └── 5-gitlab/             # GitLab CE EC2 + Docker Runner
 ├── clusters/
 │   └── gov-demo/
 │       ├── flux-system/
@@ -336,17 +361,17 @@ gov.demo.coder.com/
 
 ---
 
-## 6. Traceability
+## 7. Traceability
 
 | Req ID | Category | Traces To |
 |---|---|---|
 | INFRA-001 – 012 | AWS Infrastructure | NIST SP 800-53, FIPS 140-3 |
 | EKS-001 – 009 | EKS Cluster | CIS EKS Benchmark, ai.coder.com |
 | KARP-001 – 008 | Karpenter | ai.coder.com reference |
-| FLUX-001 – 007 | FluxCD | Trade Study §3 |
+| FLUX-001 – 007 | FluxCD | Trade Study §4 |
 | CDR-001 – 011 | Coder | ai.coder.com, Coder docs |
-| PROV-001 – 006 | Provisioners | ai.coder.com coder-provisioner module |
-| AI-001 – 008 | AI Bridge / LiteLLM | ai.coder.com, Coder AI Bridge docs |
+| PROV-001 – 005 | Provisioners | ai.coder.com coder-provisioner module |
+| AI-001 – AI-010 | AI Bridge / LiteLLM | ai.coder.com, Coder AI Bridge docs |
 | GL-001 – 014 | GitLab CE + Runner | GitLab AWS reference arch |
 | SM-001 – 004 | Secrets | AWS Secrets Manager docs |
 | REG-001 – 003 | Registry | ECR docs |
@@ -356,14 +381,12 @@ gov.demo.coder.com/
 
 ---
 
-## 7. Open Items
+## 8. Open Items
 
 | # | Item | Status |
 |---|---|---|
-| 1 | Domain name | Open |
-| 2 | Bedrock model selection | Open |
-| 3 | Coder license: Enterprise (external provisioners) vs OSS (built-in daemons) | Open |
-| 4 | NAT: fck-nat vs AWS NAT Gateway | Open |
-| 5 | GitLab runner executor: shell vs Docker | Open |
-| 6 | FluxCD: OSS vs ControlPlane Enterprise | Open |
-| 7 | LiteLLM DB: share Coder RDS or standalone | Open |
+| 1 | Google Cloud DNS NS delegation — who creates the NS records on the `demo.coder.com` zone? | Open |
+| 2 | Bedrock model access — ensure Anthropic models are enabled in us-west-2 Bedrock console | Open |
+| 3 | OpenAI + Gemini API keys — who provisions these, and what spend limits? | Open |
+| 4 | GitLab EC2 instance size (t3.xlarge? m5.large?) | Open |
+| 5 | Coder workspace base image — use `codercom/enterprise-base:ubuntu` or custom? | Open |
