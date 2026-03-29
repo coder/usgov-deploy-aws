@@ -1,9 +1,8 @@
 ################################################################################
 # Layer 4 – Bootstrap / Platform Services
-# coder4gov.com — Gov Demo Environment
+# coder4gov.com — Coder Reference Architecture
 #
-# Deploys Karpenter, Istio, ALB Controller, External Secrets Operator,
-# WAF Web ACL, and (optionally) FluxCD bootstrap.
+# Deploys Karpenter, ALB Controller, and External Secrets Operator.
 #
 # FIPS endpoints are enabled by default (INFRA-003).
 # State is stored in the S3 bucket created by Layer 0.
@@ -176,8 +175,6 @@ locals {
   kms_key_arn        = data.terraform_remote_state.data.outputs.kms_key_arn
   kms_key_id         = data.terraform_remote_state.data.outputs.kms_key_id
   secret_arns        = data.terraform_remote_state.data.outputs.secret_arns
-  s3_loki_bucket     = data.terraform_remote_state.data.outputs.s3_loki_bucket
-  s3_loki_bucket_arn = data.terraform_remote_state.data.outputs.s3_loki_bucket_arn
 
   # Layer 3 — EKS
   cluster_name      = data.terraform_remote_state.eks.outputs.cluster_name

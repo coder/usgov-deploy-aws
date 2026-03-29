@@ -86,32 +86,13 @@ else
   exit 1
 fi
 
-# --- Step 4: Verify SES domain identity ---
-echo ""
-echo "4. Checking SES domain identity for ${DOMAIN}..."
-SES_STATUS=$(aws sesv2 get-email-identity --email-identity "${DOMAIN}" \
-  --region "${REGION}" \
-  --query "VerifiedForSendingStatus" --output text 2>/dev/null || echo "NOT_FOUND")
-
-if [ "$SES_STATUS" = "True" ]; then
-  echo "   ✓ SES domain verified for sending"
-elif [ "$SES_STATUS" = "False" ]; then
-  echo "   ⚠ SES domain exists but not yet verified. Check DKIM/SPF records."
-else
-  echo "   ⚠ SES domain identity not found. Will be created in 2-data terraform."
-fi
-
 # --- Summary ---
 echo ""
 echo "=== Summary ==="
 echo "Domain:      ${DOMAIN}"
 echo "R53 Zone:    ${ZONE_ID}"
 echo "ACM Cert:    ${STATUS}"
-echo "SES:         ${SES_STATUS}"
 echo ""
 echo "DNS records to expect after full deploy:"
 echo "  dev.${DOMAIN}         → Coder ALB"
 echo "  *.dev.${DOMAIN}       → Coder ALB (workspaces)"
-echo "  gitlab.${DOMAIN}      → GitLab ALB"
-echo "  sso.${DOMAIN}         → Keycloak ALB"
-echo "  grafana.dev.${DOMAIN} → Grafana"

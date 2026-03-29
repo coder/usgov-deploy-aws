@@ -28,8 +28,7 @@ resource "aws_route53_zone" "main" {
 # ---------------------------------------------------------------------------
 # ACM — Wildcard Certificate (*.coder4gov.com)
 #
-# Covers: dev.coder4gov.com, *.dev.coder4gov.com, gitlab.coder4gov.com,
-#         sso.coder4gov.com, grafana.dev.coder4gov.com, etc.
+# Covers: dev.coder4gov.com, *.dev.coder4gov.com, etc.
 # ---------------------------------------------------------------------------
 
 resource "aws_acm_certificate" "wildcard" {

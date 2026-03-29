@@ -1,5 +1,5 @@
 ################################################################################
-# Layer 2 – Data (RDS, S3, KMS, ECR, SES, Secrets Manager)
+# Layer 2 – Data (RDS, KMS, ECR, Secrets Manager)
 # Project: coder4gov.com
 ################################################################################
 

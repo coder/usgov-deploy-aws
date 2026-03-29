@@ -2,7 +2,7 @@
 # GitHub Actions — Terraform Validation
 # =============================================================================
 #
-# Validates all Terraform layers (0-state through 5-gitlab) on every push
+# Validates all Terraform layers (0-state through 4-bootstrap) on every push
 # or pull request that touches infra/terraform/.
 #
 # Jobs:
@@ -64,7 +64,6 @@ jobs:
           - 2-data
           - 3-eks
           - 4-bootstrap
-          - 5-gitlab
     steps:
       - uses: actions/checkout@v4
 
@@ -95,7 +94,6 @@ jobs:
           - 2-data
           - 3-eks
           - 4-bootstrap
-          - 5-gitlab
     steps:
       - uses: actions/checkout@v4
 

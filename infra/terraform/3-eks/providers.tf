@@ -117,8 +117,6 @@ locals {
   rds_port                = data.terraform_remote_state.data.outputs.rds_port
   rds_security_group_id   = data.terraform_remote_state.data.outputs.rds_security_group_id
   secret_arns             = data.terraform_remote_state.data.outputs.secret_arns
-  s3_loki_bucket          = data.terraform_remote_state.data.outputs.s3_loki_bucket
-  s3_loki_bucket_arn      = data.terraform_remote_state.data.outputs.s3_loki_bucket_arn
 
   # Derived
   cluster_name = "${var.project_name}-eks"

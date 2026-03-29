@@ -1,6 +1,6 @@
 ################################################################################
 # Outputs – Layer 3 EKS
-# Consumed by Layer 4 (Bootstrap) and Layer 5+ via remote state
+# Consumed by Layer 4 (Bootstrap) via remote state
 ################################################################################
 
 # ---------------------------------------------------------------------------
@@ -56,8 +56,6 @@ output "irsa_role_arns" {
   description = "Map of IRSA role ARNs by workload name. ALB Controller and ESO IRSA are in Layer 4."
   value = {
     ebs_csi           = module.irsa_ebs_csi.iam_role_arn
-    loki              = module.irsa_loki.iam_role_arn
-    litellm           = module.irsa_litellm.iam_role_arn
     coder_provisioner = module.irsa_coder_provisioner.iam_role_arn
   }
 }

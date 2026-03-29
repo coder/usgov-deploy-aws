@@ -1,6 +1,6 @@
 ################################################################################
 # Variables – Layer 4 Bootstrap / Platform Services
-# coder4gov.com — Gov Demo Environment
+# coder4gov.com — Coder Reference Architecture
 ################################################################################
 
 # ---------------------------------------------------------------------------
@@ -73,16 +73,6 @@ variable "workspace_azs" {
 }
 
 # ---------------------------------------------------------------------------
-# Istio (MESH-001 through MESH-008)
-# ---------------------------------------------------------------------------
-
-variable "istio_version" {
-  description = "Helm chart version for Istio (base + istiod)."
-  type        = string
-  default     = "1.24.0"
-}
-
-# ---------------------------------------------------------------------------
 # AWS Load Balancer Controller
 # ---------------------------------------------------------------------------
 
@@ -100,43 +90,4 @@ variable "eso_chart_version" {
   description = "Helm chart version for External Secrets Operator."
   type        = string
   default     = "0.14.0"
-}
-
-# ---------------------------------------------------------------------------
-# WAF (SEC-010 through SEC-013)
-# ---------------------------------------------------------------------------
-
-variable "allowed_admin_cidrs" {
-  description = "CIDR blocks allowed to access Keycloak /admin paths. Empty list disables the rule."
-  type        = list(string)
-  default     = []
-}
-
-# ---------------------------------------------------------------------------
-# FluxCD (FLUX-001 through FLUX-007)
-# ---------------------------------------------------------------------------
-
-variable "flux_bootstrap_enabled" {
-  description = "Enable FluxCD bootstrap. Set to false on first apply when GitLab is not yet provisioned."
-  type        = bool
-  default     = false
-}
-
-variable "flux_git_url" {
-  description = "Git repository URL for FluxCD bootstrap (SSH or HTTPS)."
-  type        = string
-  default     = ""
-}
-
-variable "flux_git_branch" {
-  description = "Git branch for FluxCD bootstrap."
-  type        = string
-  default     = "main"
-}
-
-variable "flux_git_token" {
-  description = "Git personal-access or deploy token for HTTPS-based FluxCD bootstrap. Leave empty for SSH."
-  type        = string
-  default     = ""
-  sensitive   = true
 }
