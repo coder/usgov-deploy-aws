@@ -42,7 +42,7 @@ jobs:
 
       - uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "1.5"
+          terraform_version: "1.10.0"
 
       # -check  → exit 1 if files need reformatting
       # -recursive → walk all subdirectories under infra/terraform/
@@ -69,7 +69,7 @@ jobs:
 
       - uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "1.5"
+          terraform_version: "1.10.0"
 
       - name: terraform init (no backend)
         run: terraform init -backend=false
@@ -101,7 +101,7 @@ jobs:
 
       # --init downloads the AWS plugin declared in .tflint.hcl
       - name: tflint init
-        run: tflint --init
+        run: tflint --init --config=../../../.tflint.hcl
         working-directory: infra/terraform/${{ matrix.layer }}
 
       # --config points to the shared config at repo root
