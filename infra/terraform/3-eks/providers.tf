@@ -108,7 +108,6 @@ locals {
   # Layer 2
   kms_key_arn           = data.terraform_remote_state.data.outputs.kms_key_arn
   rds_security_group_id = data.terraform_remote_state.data.outputs.rds_security_group_id
-  secret_arns           = data.terraform_remote_state.data.outputs.secret_arns
 
   # Derived
   cluster_name = "${var.project_name}-eks"
