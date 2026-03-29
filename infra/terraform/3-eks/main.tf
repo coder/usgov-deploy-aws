@@ -26,15 +26,15 @@ module "eks" {
   source  = "terraform-aws-modules/eks/aws"
   version = "~> 21.15"
 
-  cluster_name    = local.cluster_name
-  cluster_version = var.cluster_version
+  name               = local.cluster_name
+  kubernetes_version = var.cluster_version
 
   vpc_id     = local.vpc_id
   subnet_ids = concat(local.private_system_subnet_ids, local.private_workload_subnet_ids)
 
   # API server access (EKS-002)
-  cluster_endpoint_public_access  = true
-  cluster_endpoint_private_access = true
+  endpoint_public_access  = true
+  endpoint_private_access = true
 
   # IRSA (EKS-005)
   enable_irsa = true
@@ -43,20 +43,20 @@ module "eks" {
   enable_cluster_creator_admin_permissions = true
 
   # Encryption at rest with KMS (EKS-004)
-  cluster_encryption_config = {
+  encryption_config = {
     provider_key_arn = local.kms_key_arn
     resources        = ["secrets"]
   }
 
   # Security groups — tag node SG for Karpenter discovery (KARP-001)
-  create_cluster_security_group = true
-  create_node_security_group    = true
-  node_security_group_tags      = local.karpenter_discovery_tag
+  create_security_group      = true
+  create_node_security_group = true
+  node_security_group_tags   = local.karpenter_discovery_tag
 
   # ---------------------------------------------------------------------------
   # Managed add-ons (EKS-007)
   # ---------------------------------------------------------------------------
-  cluster_addons = {
+  addons = {
     vpc-cni = {
       most_recent    = true
       before_compute = true

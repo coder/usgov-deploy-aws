@@ -59,7 +59,6 @@ locals {
   vpc_id             = data.terraform_remote_state.network.outputs.vpc_id
   vpc_cidr           = data.terraform_remote_state.network.outputs.vpc_cidr
   private_subnet_ids = data.terraform_remote_state.network.outputs.private_subnet_ids
-  route53_zone_id    = data.terraform_remote_state.network.outputs.route53_zone_id
 }
 
 # Current account & caller identity

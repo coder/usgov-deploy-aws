@@ -9,12 +9,6 @@ variable "aws_region" {
   default     = "us-west-2"
 }
 
-variable "aws_partition" {
-  description = "AWS partition. Override to aws-us-gov for GovCloud."
-  type        = string
-  default     = "aws"
-}
-
 variable "project_name" {
   description = "Project name used for resource naming and tagging."
   type        = string
