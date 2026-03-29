@@ -83,10 +83,10 @@ resource "aws_subnet" "public" {
   map_public_ip_on_launch = true
 
   tags = merge(local.all_tags, {
-    Name                                       = "${var.project_name}-public-${local.azs[count.index]}"
-    Tier                                       = "public"
-    "kubernetes.io/role/elb"                   = "1"
-    "karpenter.sh/discovery"                   = var.project_name
+    Name                                        = "${var.project_name}-public-${local.azs[count.index]}"
+    Tier                                        = "public"
+    "kubernetes.io/role/elb"                    = "1"
+    "karpenter.sh/discovery"                    = var.project_name
     "kubernetes.io/cluster/${var.project_name}" = "shared"
   })
 }
@@ -103,11 +103,11 @@ resource "aws_subnet" "private_system" {
   availability_zone = local.azs[count.index]
 
   tags = merge(local.all_tags, {
-    Name                                       = "${var.project_name}-private-system-${local.azs[count.index]}"
-    Tier                                       = "private"
-    SubnetType                                 = "system"
-    "kubernetes.io/role/internal-elb"          = "1"
-    "karpenter.sh/discovery"                   = var.project_name
+    Name                                        = "${var.project_name}-private-system-${local.azs[count.index]}"
+    Tier                                        = "private"
+    SubnetType                                  = "system"
+    "kubernetes.io/role/internal-elb"           = "1"
+    "karpenter.sh/discovery"                    = var.project_name
     "kubernetes.io/cluster/${var.project_name}" = "shared"
   })
 }
@@ -124,11 +124,11 @@ resource "aws_subnet" "private_workload" {
   availability_zone = local.azs[count.index]
 
   tags = merge(local.all_tags, {
-    Name                                       = "${var.project_name}-private-workload-${local.azs[count.index]}"
-    Tier                                       = "private"
-    SubnetType                                 = "workload"
-    "kubernetes.io/role/internal-elb"          = "1"
-    "karpenter.sh/discovery"                   = var.project_name
+    Name                                        = "${var.project_name}-private-workload-${local.azs[count.index]}"
+    Tier                                        = "private"
+    SubnetType                                  = "workload"
+    "kubernetes.io/role/internal-elb"           = "1"
+    "karpenter.sh/discovery"                    = var.project_name
     "kubernetes.io/cluster/${var.project_name}" = "shared"
   })
 }

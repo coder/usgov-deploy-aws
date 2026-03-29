@@ -14,9 +14,9 @@ module "irsa_ebs_csi" {
   source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
   version = "~> 5.0"
 
-  role_name                     = "${var.project_name}-ebs-csi"
-  attach_ebs_csi_policy         = true
-  ebs_csi_kms_cmk_ids           = [local.kms_key_arn]
+  role_name             = "${var.project_name}-ebs-csi"
+  attach_ebs_csi_policy = true
+  ebs_csi_kms_cmk_ids   = [local.kms_key_arn]
 
   oidc_providers = {
     main = {
@@ -67,9 +67,9 @@ resource "aws_iam_policy" "coder_provisioner" {
         }
       },
       {
-        Sid    = "IAMPassRole"
-        Effect = "Allow"
-        Action = ["iam:PassRole"]
+        Sid      = "IAMPassRole"
+        Effect   = "Allow"
+        Action   = ["iam:PassRole"]
         Resource = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/${var.project_name}-*"
       },
       {

@@ -58,8 +58,8 @@ module "eks" {
   # ---------------------------------------------------------------------------
   cluster_addons = {
     vpc-cni = {
-      most_recent          = true
-      before_compute       = true
+      most_recent    = true
+      before_compute = true
       configuration_values = jsonencode({
         enableNetworkPolicy = "true"
         nodeAgent = {

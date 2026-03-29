@@ -172,9 +172,9 @@ locals {
   acm_wildcard_cert_arn     = data.terraform_remote_state.network.outputs.acm_wildcard_cert_arn
 
   # Layer 2 — Data
-  kms_key_arn        = data.terraform_remote_state.data.outputs.kms_key_arn
-  kms_key_id         = data.terraform_remote_state.data.outputs.kms_key_id
-  secret_arns        = data.terraform_remote_state.data.outputs.secret_arns
+  kms_key_arn = data.terraform_remote_state.data.outputs.kms_key_arn
+  kms_key_id  = data.terraform_remote_state.data.outputs.kms_key_id
+  secret_arns = data.terraform_remote_state.data.outputs.secret_arns
 
   # Layer 3 — EKS
   cluster_name      = data.terraform_remote_state.eks.outputs.cluster_name
