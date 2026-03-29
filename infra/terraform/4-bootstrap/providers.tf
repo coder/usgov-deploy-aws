@@ -1,9 +1,8 @@
 ################################################################################
 # Layer 4 – Bootstrap / Platform Services
-# coder4gov.com — Gov Demo Environment
+# coder4gov.com — Coder Reference Architecture
 #
-# Deploys Karpenter, Istio, ALB Controller, External Secrets Operator,
-# WAF Web ACL, and (optionally) FluxCD bootstrap.
+# Deploys Karpenter, ALB Controller, and External Secrets Operator.
 #
 # FIPS endpoints are enabled by default (INFRA-003).
 # State is stored in the S3 bucket created by Layer 0.
@@ -164,30 +163,16 @@ data "aws_partition" "current" {}
 
 locals {
   # Layer 1 — Network
-  vpc_id                    = data.terraform_remote_state.network.outputs.vpc_id
-  vpc_cidr                  = data.terraform_remote_state.network.outputs.vpc_cidr
-  public_subnet_ids         = data.terraform_remote_state.network.outputs.public_subnet_ids
-  private_subnet_ids        = data.terraform_remote_state.network.outputs.private_subnet_ids
-  private_system_subnet_ids = data.terraform_remote_state.network.outputs.private_system_subnet_ids
-  route53_zone_id           = data.terraform_remote_state.network.outputs.route53_zone_id
-  acm_wildcard_cert_arn     = data.terraform_remote_state.network.outputs.acm_wildcard_cert_arn
+  vpc_id = data.terraform_remote_state.network.outputs.vpc_id
 
   # Layer 2 — Data
-  kms_key_arn        = data.terraform_remote_state.data.outputs.kms_key_arn
-  kms_key_id         = data.terraform_remote_state.data.outputs.kms_key_id
-  secret_arns        = data.terraform_remote_state.data.outputs.secret_arns
-  s3_loki_bucket     = data.terraform_remote_state.data.outputs.s3_loki_bucket
-  s3_loki_bucket_arn = data.terraform_remote_state.data.outputs.s3_loki_bucket_arn
+  kms_key_arn = data.terraform_remote_state.data.outputs.kms_key_arn
 
   # Layer 3 — EKS
   cluster_name      = data.terraform_remote_state.eks.outputs.cluster_name
   cluster_endpoint  = data.terraform_remote_state.eks.outputs.cluster_endpoint
   cluster_ca_data   = data.terraform_remote_state.eks.outputs.cluster_certificate_authority_data
   oidc_provider_arn = data.terraform_remote_state.eks.outputs.cluster_oidc_provider_arn
-  oidc_provider     = data.terraform_remote_state.eks.outputs.cluster_oidc_provider
-  cluster_sg_id     = data.terraform_remote_state.eks.outputs.cluster_security_group_id
-  node_sg_id        = data.terraform_remote_state.eks.outputs.node_security_group_id
-  primary_sg_id     = data.terraform_remote_state.eks.outputs.cluster_primary_security_group_id
 
   # Derived
   account_id = data.aws_caller_identity.current.account_id

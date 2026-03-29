@@ -1,28 +1,6 @@
-# Kubernetes namespaces for coder4gov.com platform services
-# Istio sidecar injection enabled where service-mesh observability is required
+# Kubernetes namespaces for coder4gov.com Coder deployment
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
   name: coder
-  labels:
-    istio-injection: enabled
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: litellm
-  labels:
-    istio-injection: enabled
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: keycloak
-  labels:
-    istio-injection: enabled
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: monitoring

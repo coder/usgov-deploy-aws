@@ -8,12 +8,6 @@ variable "aws_region" {
   default     = "us-west-2"
 }
 
-variable "aws_partition" {
-  description = "AWS partition (aws or aws-us-gov)."
-  type        = string
-  default     = "aws"
-}
-
 variable "project_name" {
   description = "Project slug used in naming and tagging."
   type        = string
@@ -24,12 +18,6 @@ variable "use_fips_endpoints" {
   description = "Whether to use FIPS-validated endpoints."
   type        = bool
   default     = true
-}
-
-variable "domain_name" {
-  description = "Primary domain name."
-  type        = string
-  default     = "coder4gov.com"
 }
 
 # ---------------------------------------------------------------------------

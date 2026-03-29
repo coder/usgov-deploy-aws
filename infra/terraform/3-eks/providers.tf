@@ -9,7 +9,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.0"
+      version = "~> 6.0"
     }
     kubernetes = {
       source  = "hashicorp/kubernetes"
@@ -101,24 +101,13 @@ data "terraform_remote_state" "data" {
 # ---------------------------------------------------------------------------
 locals {
   # Layer 1
-  vpc_id                     = data.terraform_remote_state.network.outputs.vpc_id
-  vpc_cidr                   = data.terraform_remote_state.network.outputs.vpc_cidr
-  public_subnet_ids          = data.terraform_remote_state.network.outputs.public_subnet_ids
-  private_subnet_ids         = data.terraform_remote_state.network.outputs.private_subnet_ids
-  private_system_subnet_ids  = data.terraform_remote_state.network.outputs.private_system_subnet_ids
+  vpc_id                      = data.terraform_remote_state.network.outputs.vpc_id
+  private_system_subnet_ids   = data.terraform_remote_state.network.outputs.private_system_subnet_ids
   private_workload_subnet_ids = data.terraform_remote_state.network.outputs.private_workload_subnet_ids
-  route53_zone_id            = data.terraform_remote_state.network.outputs.route53_zone_id
-  acm_wildcard_cert_arn      = data.terraform_remote_state.network.outputs.acm_wildcard_cert_arn
 
   # Layer 2
-  kms_key_arn             = data.terraform_remote_state.data.outputs.kms_key_arn
-  kms_key_id              = data.terraform_remote_state.data.outputs.kms_key_id
-  rds_endpoint            = data.terraform_remote_state.data.outputs.rds_endpoint
-  rds_port                = data.terraform_remote_state.data.outputs.rds_port
-  rds_security_group_id   = data.terraform_remote_state.data.outputs.rds_security_group_id
-  secret_arns             = data.terraform_remote_state.data.outputs.secret_arns
-  s3_loki_bucket          = data.terraform_remote_state.data.outputs.s3_loki_bucket
-  s3_loki_bucket_arn      = data.terraform_remote_state.data.outputs.s3_loki_bucket_arn
+  kms_key_arn           = data.terraform_remote_state.data.outputs.kms_key_arn
+  rds_security_group_id = data.terraform_remote_state.data.outputs.rds_security_group_id
 
   # Derived
   cluster_name = "${var.project_name}-eks"

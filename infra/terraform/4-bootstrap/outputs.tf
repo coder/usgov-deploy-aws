@@ -1,8 +1,8 @@
 ################################################################################
 # Outputs – Layer 4 Bootstrap / Platform Services
-# coder4gov.com — Gov Demo Environment
+# coder4gov.com — Coder Reference Architecture
 #
-# Consumed by Layer 5 (GitLab), FluxCD manifests, and application layers.
+# Consumed by FluxCD manifests and application layers.
 ################################################################################
 
 # ---------------------------------------------------------------------------
@@ -40,22 +40,4 @@ output "alb_controller_role_arn" {
 output "external_secrets_role_arn" {
   description = "IAM role ARN for External Secrets Operator (IRSA)."
   value       = module.eso_irsa.iam_role_arn
-}
-
-# ---------------------------------------------------------------------------
-# WAF (SEC-010 through SEC-013)
-# ---------------------------------------------------------------------------
-
-output "waf_web_acl_arn" {
-  description = "ARN of the WAF Web ACL for EKS services. Use in ALB Ingress annotations."
-  value       = aws_wafv2_web_acl.eks.arn
-}
-
-# ---------------------------------------------------------------------------
-# FluxCD (FLUX-007)
-# ---------------------------------------------------------------------------
-
-output "flux_status" {
-  description = "Current FluxCD bootstrap status (enabled/disabled)."
-  value       = var.flux_bootstrap_enabled ? "enabled" : "disabled"
 }

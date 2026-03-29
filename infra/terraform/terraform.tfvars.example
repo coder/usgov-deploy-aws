@@ -1,6 +1,6 @@
 ################################################################################
 # terraform.tfvars.example
-# coder4gov.com — Gov Demo Environment
+# coder4gov.com — Coder Reference Architecture
 #
 # Copy this file to terraform.tfvars in each layer directory and uncomment
 # the section that matches your target environment.
