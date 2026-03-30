@@ -22,8 +22,7 @@ resource "kubernetes_storage_class_v1" "gp3_encrypted" {
     kmsKeyId  = local.kms_key_arn
   }
 
-  # Wait for EKS access entry to propagate before talking to the
-  # K8s API. Without this, the storage class creation races the
-  # RBAC grant and fails with "forbidden."
-  depends_on = [module.eks]
+  # Moved from layer 3 to layer 4 to avoid RBAC propagation
+  # race. By the time layer 4 runs, the EKS access entry from
+  # layer 3 is fully propagated.
 }
