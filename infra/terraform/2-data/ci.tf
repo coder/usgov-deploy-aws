@@ -1,10 +1,17 @@
 ################################################################################
-# GitHub Actions OIDC → AWS IAM (CI/CD for ECR image pushes)
+# GitHub Actions IAM Role (CI/CD for ECR image pushes)
 #
 # Creates:
-#   - OIDC identity provider for GitHub Actions (if not already present)
 #   - IAM role assumable only by this repo's GitHub Actions workflows
 #   - Inline policy granting ECR push/pull to project repos only
+#
+# PREREQUISITE: The GitHub Actions OIDC identity provider must exist in
+# the AWS account. This is a one-time, account-level setup — run once:
+#
+#   aws iam create-open-id-connect-provider \
+#     --url https://token.actions.githubusercontent.com \
+#     --client-id-list sts.amazonaws.com \
+#     --thumbprint-list 6938fd4d98bab03faadb97b34396831e3780aea1
 #
 # The role ARN and ECR registry URL should be stored as GitHub repo secrets:
 #   AWS_ROLE_ARN  = aws_iam_role.github_actions.arn
@@ -12,20 +19,12 @@
 ################################################################################
 
 # ---------------------------------------------------------------------------
-# OIDC Identity Provider — trust GitHub Actions JWTs
-# One per AWS account. If you already have this from another repo, import it:
-#   terraform import aws_iam_openid_connect_provider.github \
-#     arn:aws:iam::<ACCOUNT_ID>:oidc-provider/token.actions.githubusercontent.com
+# Look up the existing OIDC provider. Fails if the prerequisite above
+# hasn't been run — that's intentional (clear error > silent misconfiguration).
 # ---------------------------------------------------------------------------
 
-resource "aws_iam_openid_connect_provider" "github" {
-  url             = "https://token.actions.githubusercontent.com"
-  client_id_list  = ["sts.amazonaws.com"]
-  thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1"]
-
-  tags = {
-    Name = "github-actions-oidc"
-  }
+data "aws_iam_openid_connect_provider" "github" {
+  url = "https://token.actions.githubusercontent.com"
 }
 
 # ---------------------------------------------------------------------------
@@ -41,7 +40,7 @@ resource "aws_iam_role" "github_actions" {
       {
         Effect = "Allow"
         Principal = {
-          Federated = aws_iam_openid_connect_provider.github.arn
+          Federated = data.aws_iam_openid_connect_provider.github.arn
         }
         Action = "sts:AssumeRoleWithWebIdentity"
         Condition = {

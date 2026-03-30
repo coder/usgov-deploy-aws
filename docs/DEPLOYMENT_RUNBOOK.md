@@ -291,9 +291,33 @@ this depending on your setup):
 
 ## Phase D — Set Up CI/CD (GitHub Actions → ECR)
 
-The OIDC provider, IAM role, and ECR permissions were all created
-by Terraform layer 2 (`infra/terraform/2-data/ci.tf`). No manual
-AWS CLI commands needed.
+The IAM role and ECR permissions were created by Terraform layer 2
+(`infra/terraform/2-data/ci.tf`). One prerequisite must exist first.
+
+### D0. Create the GitHub Actions OIDC provider (one-time, per account)
+
+**What this does:** Registers GitHub Actions as a trusted identity
+provider in your AWS account. This is an account-level singleton —
+run it once, and every project in the account can reference it.
+Terraform layer 2 looks it up via a `data` source. If it doesn't
+exist, `terraform apply` will fail with a clear error.
+
+Check if it already exists:
+```bash
+aws iam list-open-id-connect-providers \
+  | grep token.actions.githubusercontent.com
+```
+
+If nothing returned, create it:
+```bash
+aws iam create-open-id-connect-provider \
+  --url https://token.actions.githubusercontent.com \
+  --client-id-list sts.amazonaws.com \
+  --thumbprint-list 6938fd4d98bab03faadb97b34396831e3780aea1
+```
+
+> This is the only imperative step in the entire deployment. It's
+> account-level and idempotent — safe to skip if it already exists.
 
 ### D1. Get the CI values from Terraform outputs
 
@@ -351,14 +375,6 @@ aws ecr list-images --repository-name coder4gov/base-fips
 aws ecr list-images --repository-name coder4gov/desktop-fips
 ```
 
-> **Note:** If the OIDC provider already exists in your account from
-> another repo, Terraform will fail on `aws_iam_openid_connect_provider.github`.
-> Import it instead:
-> ```bash
-> cd infra/terraform/2-data
-> terraform import aws_iam_openid_connect_provider.github \
->   arn:aws:iam::<ACCOUNT_ID>:oidc-provider/token.actions.githubusercontent.com
-> ```
 
 
 ---
@@ -391,7 +407,8 @@ A6     Layer 3: EKS cluster              (~15 min)
 A7     Layer 4: Karpenter, ALB, ESO      (~5 min)
 B1–B2  Seed Coder license
 C1–C4  Inject outputs, push, verify
-D1–D7  OIDC + IAM role + GitHub secrets  (CI/CD)
+D0     OIDC provider (one CLI cmd, once)   (skip if exists)
+D1–D4  GitHub secrets + test CI            (IAM role from layer 2)
 E      API keys for demo env             (optional)
 ```
 
