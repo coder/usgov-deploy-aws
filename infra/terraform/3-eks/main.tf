@@ -39,6 +39,9 @@ module "eks" {
   # IRSA (EKS-005)
   enable_irsa = true
 
+  # Use the Layer 2 KMS key, not the module's auto-created one.
+  create_kms_key = false
+
   # Admin access for the cluster creator
   enable_cluster_creator_admin_permissions = true
 
@@ -86,6 +89,12 @@ module "eks" {
     aws-ebs-csi-driver = {
       most_recent              = true
       service_account_role_arn = module.irsa_ebs_csi.iam_role_arn
+    }
+
+    # Required for Karpenter Pod Identity in layer 4.
+    eks-pod-identity-agent = {
+      most_recent    = true
+      before_compute = true
     }
   }
 

@@ -19,7 +19,9 @@ module "karpenter" {
 
   cluster_name = local.cluster_name
 
-  # IAM role for the Karpenter controller pod (IRSA)
+  # IAM role for the Karpenter controller pod (Pod Identity).
+  # Module v21 removed IRSA — Pod Identity is the only option.
+  # Requires eks-pod-identity-agent addon in layer 3.
   create_iam_role          = true
   iam_role_use_name_prefix = true
 
@@ -30,8 +32,8 @@ module "karpenter" {
   # Spot termination handling via SQS
   enable_spot_termination = true
 
-  # We use IRSA, not EKS Pod Identity
-  create_pod_identity_association = false
+  # Pod Identity association (default: true)
+  create_pod_identity_association = true
 
   # Additional policies for launched nodes
   node_iam_role_additional_policies = {
@@ -59,11 +61,7 @@ resource "helm_release" "karpenter" {
   chart      = "karpenter"
   version    = var.karpenter_chart_version
 
-  # --- IRSA annotation ---
-  set {
-    name  = "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
-    value = module.karpenter.iam_role_arn
-  }
+  # Pod Identity handles auth — no IRSA annotation needed.
 
   # --- Cluster settings ---
   set {

@@ -11,17 +11,25 @@
 # ---------------------------------------------------------------------------
 
 data "aws_iam_policy_document" "eso" {
+  # Scoped read access to project secrets.
   statement {
     sid    = "SecretsManagerRead"
     effect = "Allow"
     actions = [
       "secretsmanager:GetSecretValue",
       "secretsmanager:DescribeSecret",
-      "secretsmanager:ListSecrets",
       "secretsmanager:BatchGetSecretValue",
       "secretsmanager:ListSecretVersionIds",
     ]
     resources = ["arn:${local.partition}:secretsmanager:${var.aws_region}:${local.account_id}:secret:${var.project_name}/*"]
+  }
+
+  # ListSecrets does not support resource-level permissions.
+  statement {
+    sid       = "SecretsManagerList"
+    effect    = "Allow"
+    actions   = ["secretsmanager:ListSecrets"]
+    resources = ["*"]
   }
 }
 
