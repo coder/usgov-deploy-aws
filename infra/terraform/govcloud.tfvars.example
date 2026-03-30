@@ -1,0 +1,26 @@
+# GovCloud Configuration
+# Copy this file to terraform.tfvars and adjust values for your environment.
+#
+# IMPORTANT: Terraform backend blocks do not support variables.
+# You must also update the backend "s3" blocks in each layer's providers.tf:
+#   - bucket  → "<your-project>-terraform-state"
+#   - region  → "us-gov-west-1"
+#   - dynamodb_table → "<your-project>-terraform-lock"
+#
+# Use scripts/rename-backend.sh to automate this.
+
+aws_region    = "us-gov-west-1"
+aws_partition = "aws-us-gov"
+
+project_name = "coder4gov"
+domain_name  = "coder4gov.com"
+
+# GovCloud has 2 AZs in us-gov-west-1
+workspace_azs = ["us-gov-west-1a", "us-gov-west-1b"]
+
+# Adjust instance types if needed — m7a may not be available in all GovCloud regions
+system_node_instance_types = ["m6i.xlarge"]
+workspace_instance_types   = ["m6i.xlarge", "m6i.2xlarge", "m6i.4xlarge"]
+
+# FIPS endpoints — enabled by default, keep on for GovCloud
+use_fips_endpoints = true
