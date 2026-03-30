@@ -67,13 +67,8 @@ output "route53_zone_id" {
 # ---------------------------------------------------------------------------
 
 output "acm_wildcard_cert_arn" {
-  description = "ARN of the validated ACM wildcard certificate (*.coder4gov.com)."
+  description = "ARN of the validated ACM certificate (*.domain, apex, *.dev.domain)."
   value       = aws_acm_certificate_validation.wildcard.certificate_arn
-}
-
-output "acm_apex_cert_arn" {
-  description = "ARN of the validated ACM apex certificate (coder4gov.com)."
-  value       = aws_acm_certificate_validation.apex.certificate_arn
 }
 
 # ---------------------------------------------------------------------------
