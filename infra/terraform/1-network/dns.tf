@@ -33,8 +33,11 @@ resource "aws_route53_zone" "main" {
 
 resource "aws_acm_certificate" "wildcard" {
   domain_name               = "*.${var.domain_name}"
-  subject_alternative_names = [var.domain_name]
-  validation_method         = "DNS"
+  subject_alternative_names = [
+    var.domain_name,
+    "*.dev.${var.domain_name}",
+  ]
+  validation_method = "DNS"
 
   lifecycle {
     create_before_destroy = true
