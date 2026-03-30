@@ -54,6 +54,15 @@ variable "db_backup_retention_period" {
 }
 
 # ---------------------------------------------------------------------------
+# CI/CD
+# ---------------------------------------------------------------------------
+variable "github_repo" {
+  description = "GitHub repo (org/name) allowed to assume the CI role via OIDC."
+  type        = string
+  default     = "coder/usgov-deploy-aws"
+}
+
+# ---------------------------------------------------------------------------
 # Tags
 # ---------------------------------------------------------------------------
 variable "tags" {

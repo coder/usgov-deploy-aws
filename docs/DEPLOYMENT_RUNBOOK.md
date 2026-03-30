@@ -113,11 +113,13 @@ gp3, 50–200 GiB autoscaling, 7-day backups, deletion protection),
 3 ECR repositories (coder, base-fips, desktop-fips — all
 KMS-encrypted with scan-on-push), KMS CMK (shared key for RDS/EBS/
 ECR/Secrets Manager), Secrets Manager secrets (RDS password
-auto-generated, Coder license placeholder).
+auto-generated, Coder license placeholder), GitHub Actions OIDC
+provider + IAM role for CI/CD (scoped to this repo, ECR push only).
 
 **Why:** Coder needs a PostgreSQL database. ECR stores the FIPS
 container images. Secrets Manager holds credentials that
-ExternalSecrets syncs into Kubernetes.
+ExternalSecrets syncs into Kubernetes. The OIDC + IAM role lets
+GitHub Actions push images to ECR without static access keys.
 
 ```bash
 cd infra/terraform/2-data
@@ -289,141 +291,37 @@ this depending on your setup):
 
 ## Phase D — Set Up CI/CD (GitHub Actions → ECR)
 
-ECR repos now exist (created by layer 2). This phase wires GitHub
-Actions to push FIPS images into them.
+The OIDC provider, IAM role, and ECR permissions were all created
+by Terraform layer 2 (`infra/terraform/2-data/ci.tf`). No manual
+AWS CLI commands needed.
 
-### D1. Get your AWS account ID
-
-```bash
-aws sts get-caller-identity --query Account --output text
-# e.g. 123456789012
-```
-
-### D2. Create the OIDC identity provider
-
-**What this does:** Tells AWS to trust GitHub Actions as an identity
-provider. When a GitHub Actions workflow runs, GitHub issues a JWT.
-This OIDC provider lets AWS validate that JWT so the workflow can
-assume an IAM role — no static access keys needed.
-
-**One-time setup. Skip if you already have this from another repo.**
-
-Check first:
-```bash
-aws iam list-open-id-connect-providers \
-  | grep token.actions.githubusercontent.com
-# If it prints something, skip to D3
-```
-
-If nothing returned:
-```bash
-aws iam create-open-id-connect-provider \
-  --url https://token.actions.githubusercontent.com \
-  --client-id-list sts.amazonaws.com \
-  --thumbprint-list 6938fd4d98bab03faadb97b34396831e3780aea1
-```
-
-### D3. Create the IAM role for CI
-
-**What this does:** Creates an IAM role that only GitHub Actions
-workflows running in the `coder/usgov-deploy-aws` repo can assume.
-The trust policy uses the OIDC provider from D2 and restricts
-access to this specific repo. The permissions allow pushing and
-pulling container images to/from ECR.
-
-Save this as `/tmp/trust-policy.json` (replace `ACCOUNT_ID`):
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": {
-        "Federated": "arn:aws:iam::ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com"
-      },
-      "Action": "sts:AssumeRoleWithWebIdentity",
-      "Condition": {
-        "StringEquals": {
-          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
-        },
-        "StringLike": {
-          "token.actions.githubusercontent.com:sub": "repo:coder/usgov-deploy-aws:*"
-        }
-      }
-    }
-  ]
-}
-```
+### D1. Get the CI values from Terraform outputs
 
 ```bash
-# Replace ACCOUNT_ID in the file first, then:
-aws iam create-role \
-  --role-name usgov-deploy-aws-ci \
-  --assume-role-policy-document file:///tmp/trust-policy.json
+cd infra/terraform/2-data
+terraform output github_actions_role_arn
+# e.g. arn:aws:iam::123456789012:role/coder4gov-github-actions-ci
+
+terraform output ecr_registry
+# e.g. 123456789012.dkr.ecr.us-west-2.amazonaws.com
+cd ../../..
 ```
 
-### D4. Attach ECR permissions to the role
-
-**What this does:** Grants the CI role permission to authenticate
-with ECR (GetAuthorizationToken works globally) and push/pull
-images to the three repos created by Terraform layer 2. Scoped
-to `coder4gov/*` repos only — can't touch anything else in ECR.
-
-Save as `/tmp/ecr-policy.json` (replace `ACCOUNT_ID`):
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "ECRAuth",
-      "Effect": "Allow",
-      "Action": "ecr:GetAuthorizationToken",
-      "Resource": "*"
-    },
-    {
-      "Sid": "ECRPush",
-      "Effect": "Allow",
-      "Action": [
-        "ecr:BatchCheckLayerAvailability",
-        "ecr:GetDownloadUrlForLayer",
-        "ecr:BatchGetImage",
-        "ecr:PutImage",
-        "ecr:InitiateLayerUpload",
-        "ecr:UploadLayerPart",
-        "ecr:CompleteLayerUpload",
-        "ecr:CreateRepository",
-        "ecr:DescribeRepositories"
-      ],
-      "Resource": "arn:aws:ecr:us-west-2:ACCOUNT_ID:repository/coder4gov/*"
-    }
-  ]
-}
-```
-
-```bash
-aws iam put-role-policy \
-  --role-name usgov-deploy-aws-ci \
-  --policy-name ecr-push \
-  --policy-document file:///tmp/ecr-policy.json
-```
-
-### D5. Add GitHub repo secrets
+### D2. Add GitHub repo secrets
 
 **Where:** https://github.com/coder/usgov-deploy-aws/settings/secrets/actions
 
 **Why:** The GitHub Actions workflows reference these secrets to
 authenticate with AWS and know which ECR registry to push to. No
 AWS access keys are stored — the workflow uses OIDC federation to
-get short-lived credentials via the role from D3.
+get short-lived credentials via the IAM role Terraform created.
 
-| Secret name | Value | Example |
+| Secret name | Value | Source |
 |---|---|---|
-| `ECR_REGISTRY` | `<ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com` | `123456789012.dkr.ecr.us-west-2.amazonaws.com` |
-| `AWS_ROLE_ARN` | `arn:aws:iam::<ACCOUNT_ID>:role/usgov-deploy-aws-ci` | `arn:aws:iam::123456789012:role/usgov-deploy-aws-ci` |
+| `AWS_ROLE_ARN` | The role ARN from D1 | `terraform output github_actions_role_arn` |
+| `ECR_REGISTRY` | The registry URL from D1 | `terraform output ecr_registry` |
 
-### D6. Test the CI pipeline
+### D3. Test the CI pipeline
 
 **What this does:** Manually triggers the Coder FIPS build workflow.
 It clones the Coder source, compiles a FIPS-enabled binary with
@@ -445,13 +343,23 @@ Successfully pushed <REGISTRY>/coder4gov/coder:latest-fips
 Then test **Workspace FIPS Images** the same way. This builds the
 RHEL 9 base-fips and desktop-fips images.
 
-### D7. Verify images in ECR
+### D4. Verify images in ECR
 
 ```bash
 aws ecr list-images --repository-name coder4gov/coder
 aws ecr list-images --repository-name coder4gov/base-fips
 aws ecr list-images --repository-name coder4gov/desktop-fips
 ```
+
+> **Note:** If the OIDC provider already exists in your account from
+> another repo, Terraform will fail on `aws_iam_openid_connect_provider.github`.
+> Import it instead:
+> ```bash
+> cd infra/terraform/2-data
+> terraform import aws_iam_openid_connect_provider.github \
+>   arn:aws:iam::<ACCOUNT_ID>:oidc-provider/token.actions.githubusercontent.com
+> ```
+
 
 ---
 
@@ -478,7 +386,7 @@ aws secretsmanager create-secret \
 A1–A2  Clone + configure
 A3     Layer 0: S3 state bucket          (~1 min)
 A4     Layer 1: VPC, DNS, ACM            (~3 min)  → update NS records
-A5     Layer 2: RDS, ECR, KMS, Secrets   (~10 min)
+A5     Layer 2: RDS, ECR, KMS, Secrets, CI (~10 min)
 A6     Layer 3: EKS cluster              (~15 min)
 A7     Layer 4: Karpenter, ALB, ESO      (~5 min)
 B1–B2  Seed Coder license

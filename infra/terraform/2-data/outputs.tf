@@ -53,3 +53,14 @@ output "secret_arns" {
     coder_license       = aws_secretsmanager_secret.coder_license.arn
   }
 }
+
+# CI/CD — store these as GitHub repo secrets
+output "github_actions_role_arn" {
+  description = "IAM role ARN for GitHub Actions CI (set as AWS_ROLE_ARN secret)."
+  value       = aws_iam_role.github_actions.arn
+}
+
+output "ecr_registry" {
+  description = "ECR registry URL (set as ECR_REGISTRY secret)."
+  value       = "${data.aws_caller_identity.current.account_id}.dkr.ecr.${var.aws_region}.amazonaws.com"
+}
