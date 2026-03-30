@@ -1,136 +1,175 @@
-# coder4gov — Coder on AWS GovCloud Reference Architecture
+# coder4gov — Deploy Coder on AWS with FIPS & GovCloud compliance
 
-Standalone, FIPS-compliant reference architecture for deploying [Coder](https://coder.com)
-on AWS (or AWS GovCloud). Single-region, multi-AZ, GitOps-ready.
+A forkable reference architecture for deploying
+[Coder](https://coder.com) on AWS EKS in government-compliant
+environments. FIPS 140-3, GovCloud-ready, no static IAM keys.
 
-Customers can fork this repo and deploy Coder without any additional
-dependencies. For the full demo stack (GitLab, Keycloak, LiteLLM, monitoring,
-etc.), see [coder/aws-gov-infra](https://github.com/coder/aws-gov-infra) which
-composes on top of this repo via `terraform_remote_state`.
-
-## What This Deploys
-
-| Component | Where | Purpose |
-|---|---|---|
-| Coder (Premium) | EKS | Developer workspaces |
-| Coder Provisioner | EKS | Terraform workspace lifecycle |
-| Karpenter | EKS | Workspace node autoscaling (spot + on-demand) |
-| External Secrets Operator | EKS | AWS Secrets Manager → K8s Secrets |
-| ALB Controller | EKS | AWS Load Balancer ingress |
-| RDS PostgreSQL 15 | AWS | Coder database (Multi-AZ, KMS-encrypted) |
-| ECR | AWS | FIPS container images |
-| KMS | AWS | Encryption for RDS, EBS, ECR |
-
-## Key Design Decisions
-
-- **FIPS everywhere** — EKS nodes use AL2023 with FIPS crypto; Coder binary
-  built with `GOFIPS140=latest` (Go 1.24+ native FIPS 140-3); workspace images
-  use RHEL 9 UBI with `crypto-policies FIPS`; all AWS APIs use FIPS endpoints
-- **AWS managed services** — Secrets Manager, ECR, RDS multi-AZ, NAT Gateway
-- **GovCloud-portable** — all config parameterized; flip `aws_region` to
-  `us-gov-west-1` in tfvars, no code changes
-- **Standalone** — no submodules, no dependencies on external repos.
-  `aws-gov-infra` can layer on top via `terraform_remote_state`
+Fork this repo, set your variables, and run `make apply`. For the
+full demo stack (GitLab, Keycloak, LiteLLM, monitoring), see
+[coder/aws-gov-infra](https://github.com/coder/aws-gov-infra) which
+layers on top via `terraform_remote_state`.
 
 ## Architecture
 
+Five Terraform layers build the infrastructure. FluxCD deploys Coder
+on top.
+
 ```text
-┌─────────────────────────────────────────────────────────────────┐
-│ terraform apply (layers 0 → 1 → 2 → 3 → 4)                    │
-│                                                                 │
-│   0-state     S3 backend, DynamoDB lock                         │
-│   1-network   VPC, subnets, Route 53                            │
-│   2-data      RDS (coder DB only), KMS, ECR, Secrets Manager    │
-│   3-eks       EKS cluster, managed node group                   │
-│   4-bootstrap Karpenter, ALB controller, External Secrets       │
-│                                                                 │
-│   Outputs: VPC ID, subnet IDs, EKS cluster name/endpoint,      │
-│            RDS endpoint, KMS key ARN, ECR repo URLs,            │
-│            Karpenter role ARN, OIDC provider ARN                │
-│                                                                 │
-│   ✅ Deploy Coder via Flux manifests in clusters/gov-demo/      │
-└─────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│  Terraform (layers 0 → 4)                                           │
+│                                                                     │
+│    0-state      S3 backend + DynamoDB lock table                    │
+│    1-network    VPC, subnets, NAT GW, Route 53, ACM certs          │
+│    2-data       RDS PostgreSQL 15, KMS CMK, ECR, Secrets Manager   │
+│    3-eks        EKS cluster, managed node group, IRSA roles        │
+│    4-bootstrap  Karpenter, ALB Controller, External Secrets        │
+│                                                                     │
+│  FluxCD (GitOps)                                                    │
+│    clusters/gov-demo/   →  Coder server + provisioner HelmReleases │
+│                                                                     │
+│  Flow:  terraform apply ──► inject-outputs.sh ──► FluxCD ──► Coder │
+└─────────────────────────────────────────────────────────────────────┘
 ```
+
+## Quick Start
+
+1. **Fork this repo.**
+
+   ```bash
+   gh repo fork coder/coder4gov --clone
+   cd coder4gov
+   ```
+
+2. **Rename the Terraform backend** to point at your state resources.
+
+   ```bash
+   scripts/rename-backend.sh --project-name myproject --region us-west-2
+   ```
+
+3. **Set variables** in `infra/terraform/terraform.tfvars` (or pass
+   `TFVARS=` to Make).
+
+   ```hcl
+   project_name = "myproject"
+   domain_name  = "myproject.example.com"
+   aws_region   = "us-west-2"
+   ```
+
+4. **Deploy all layers.**
+
+   ```bash
+   make init
+   make apply
+   ```
+
+5. **Inject Terraform outputs** into FluxCD manifests.
+
+   ```bash
+   make inject-outputs
+   ```
+
+6. **Apply FluxCD manifests** from `clusters/gov-demo/` or bootstrap
+   FluxCD to reconcile the cluster path.
+
+7. **Access Coder** at `https://dev.<your-domain>`.
+
+See [docs/OPERATIONS.md](docs/OPERATIONS.md) for the full step-by-step
+walkthrough and day-2 operations.
+
+## GovCloud Deployment
+
+Copy the example tfvars and re-run the backend rename script:
+
+```bash
+cp infra/terraform/govcloud.tfvars.example terraform.tfvars
+scripts/rename-backend.sh --project-name myproject --region us-gov-west-1
+make apply TFVARS=terraform.tfvars
+```
+
+See [docs/OPERATIONS.md — Deploying to GovCloud](docs/OPERATIONS.md#deploying-to-govcloud)
+for instance-type considerations and FIPS endpoint details.
+
+## What's Included
+
+| Component | Layer | Purpose |
+|-----------|-------|---------|
+| VPC + subnets | 1-network | Multi-AZ private/public networking |
+| Route 53 + ACM | 1-network | DNS zone and TLS certificates |
+| RDS PostgreSQL 15 | 2-data | Coder database (Multi-AZ, KMS-encrypted) |
+| KMS CMK | 2-data | Encryption for RDS, EBS, ECR, Secrets Manager, S3 |
+| ECR | 2-data | FIPS container image registry |
+| Secrets Manager | 2-data | Coder license + RDS credentials |
+| EKS cluster | 3-eks | Kubernetes control plane + system node group |
+| Karpenter | 4-bootstrap | Workspace node autoscaling (spot + on-demand) |
+| ALB Controller | 4-bootstrap | AWS Load Balancer ingress |
+| External Secrets | 4-bootstrap | Secrets Manager → K8s Secrets sync |
+| Coder server | FluxCD | Developer workspace platform |
+| Coder provisioner | FluxCD | Terraform workspace lifecycle |
+| FIPS images | `images/` | RHEL 9 UBI base, desktop, and Coder server |
+| Workspace templates | `templates/` | Dev workspace + Codex CLI template |
+
+## Compliance Features
+
+- **FIPS 140-3 cryptography** — Coder built with `GOFIPS140=latest`
+  (Go 1.24+); workspace images use RHEL 9 UBI `crypto-policies FIPS`;
+  EKS nodes run AL2023 with FIPS crypto modules.
+- **FIPS endpoints** — All AWS API calls routed through FIPS endpoints.
+- **KMS CMK encryption** — RDS, EBS, ECR, Secrets Manager, and S3
+  state bucket encrypted with customer-managed keys with automatic
+  rotation.
+- **TLS 1.2+ everywhere** — ALB, RDS SSL, HTTPS-only ingress.
+- **No static IAM keys** — IRSA (IAM Roles for Service Accounts) for
+  all pod-level AWS access.
+- **Private compute** — All EKS nodes in private subnets; NAT Gateway
+  for outbound only.
+- **VPC Flow Logs** — CloudWatch with 365-day retention.
+- **Terraform state encryption** — S3 SSE-KMS + versioning + DynamoDB
+  locking.
+- **GovCloud-portable** — Flip `aws_region` to `us-gov-west-1` in
+  tfvars; no code changes required.
 
 ## Repo Structure
 
 ```text
 ├── docs/
-│   ├── ARCHITECTURE.md        # Infrastructure diagrams and design
-│   ├── REQUIREMENTS.md        # Requirements (shall statements, traceability)
-│   ├── OPERATIONS.md          # Day 1/Day 2 operations and runbooks
-│   ├── CODER_FIPS_BUILD.md    # Build Coder binary/image with FIPS 140-3
-│   └── dns-bootstrap.sh       # Verify R53 zone + request ACM wildcard cert
+│   ├── ARCHITECTURE.md          Infrastructure diagrams and design
+│   ├── OPERATIONS.md            Day 1 / Day 2 operations and runbooks
+│   ├── REQUIREMENTS.md          Requirements (shall statements)
+│   └── CODER_FIPS_BUILD.md      Build Coder with FIPS 140-3
 ├── images/
-│   ├── base-fips/Dockerfile   # RHEL 9 UBI + FIPS crypto + Docker CE
-│   ├── desktop-fips/Dockerfile# base-fips + XFCE + KasmVNC
-│   └── coder-fips/Dockerfile  # FIPS Coder server image
+│   ├── base-fips/Dockerfile     RHEL 9 UBI + FIPS crypto + Docker CE
+│   ├── desktop-fips/Dockerfile  base-fips + XFCE + KasmVNC
+│   └── coder-fips/Dockerfile    FIPS Coder server image
 ├── templates/
-│   └── dev-codex/main.tf      # Generic dev workspace + Codex CLI
+│   └── dev-codex/main.tf        Dev workspace + Codex CLI
 ├── clusters/
-│   └── gov-demo/              # FluxCD / GitOps manifests
-│       ├── infrastructure/    # Namespaces, HelmRepos, ExternalSecrets
-│       └── apps/              # Coder server + provisioner HelmReleases
+│   └── gov-demo/                FluxCD / GitOps manifests
+│       ├── infrastructure/      Namespaces, HelmRepos, ExternalSecrets
+│       └── apps/                Coder server + provisioner HelmReleases
 ├── scripts/
-│   └── seed-secrets.sh        # Seed Coder license into Secrets Manager
-└── infra/
-    └── terraform/
-        ├── 0-state/           # S3 backend + DynamoDB lock
-        ├── 1-network/         # VPC, subnets, NAT GW, Route 53
-        ├── 2-data/            # RDS, KMS, Secrets Manager, ECR
-        ├── 3-eks/             # EKS cluster, node groups, IRSA
-        └── 4-bootstrap/       # Karpenter + ALB Controller + External Secrets
+│   ├── rename-backend.sh        Rewrite backend blocks for your project
+│   ├── inject-outputs.sh        Patch FluxCD manifests with TF outputs
+│   └── seed-secrets.sh          Seed Coder license into Secrets Manager
+└── infra/terraform/
+    ├── 0-state/                 S3 backend + DynamoDB lock
+    ├── 1-network/               VPC, subnets, NAT GW, Route 53
+    ├── 2-data/                  RDS, KMS, Secrets Manager, ECR
+    ├── 3-eks/                   EKS cluster, node groups, IRSA
+    └── 4-bootstrap/             Karpenter, ALB Controller, External Secrets
 ```
 
-## DNS
+## Customization
 
-Base domain: `coder4gov.com` (AWS-registered, Route 53 authoritative)
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the fork-and-rename
+checklist and guidelines for contributing back upstream.
 
-| Subdomain | Service |
-|---|---|
-| `dev.coder4gov.com` | Coder |
-| `*.dev.coder4gov.com` | Coder workspaces |
+## Related
 
-## Prerequisites
+[coder/aws-gov-infra](https://github.com/coder/aws-gov-infra) — Full
+platform overlay that layers GitLab, Keycloak, LiteLLM, and
+observability on top of this repo via `terraform_remote_state`. Not
+required for a standalone Coder deployment.
 
-Before starting Terraform:
+## License
 
-1. **DNS** — `coder4gov.com` is AWS-registered. Route 53 zone created in `1-network`
-2. **Coder FIPS build** — follow `docs/CODER_FIPS_BUILD.md` to build + push to ECR
-3. **FIPS images** — push `base-fips` and `desktop-fips` to ECR via GitHub Actions
-
-## Deploy Sequence
-
-```text
-0-state → 1-network → 2-data → 3-eks → 4-bootstrap → Apply Flux manifests
-```
-
-1. `cd infra/terraform/0-state && terraform apply`
-2. `cd ../1-network && terraform apply`
-3. `cd ../2-data && terraform apply`
-4. Run `scripts/seed-secrets.sh` to seed Coder license
-5. `cd ../3-eks && terraform apply`
-6. `cd ../4-bootstrap && terraform apply`
-7. Apply FluxCD manifests from `clusters/gov-demo/` or bootstrap FluxCD
-
-> **Terraform owns infrastructure. FluxCD owns application workloads.**
-> See [docs/OPERATIONS.md](docs/OPERATIONS.md) for the full operations guide.
-
-## Integration with aws-gov-infra
-
-This repo exposes Terraform outputs that `coder/aws-gov-infra` consumes via
-`terraform_remote_state` to layer on additional services:
-
-| Output | Source Layer | Consumed By |
-|---|---|---|
-| `vpc_id`, `private_subnet_ids`, `public_subnet_ids` | 1-network | GitLab SGs, ALB, OpenSearch |
-| `route53_zone_id` | 1-network | GitLab DNS, Keycloak DNS |
-| `eks_cluster_name`, `eks_cluster_endpoint`, `eks_oidc_provider_arn` | 3-eks | Istio, FluxCD, Kyverno |
-| `rds_endpoint`, `rds_port` | 2-data | Additional databases |
-| `kms_key_arn` | 2-data | Encryption for additional resources |
-| `karpenter_node_role_name` | 4-bootstrap | Podman EC2NodeClass |
-| `ecr_repo_urls` | 2-data | Image references in Flux manifests |
-
-## Requirements
-
-See [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) for the full specification.
+Apache 2.0

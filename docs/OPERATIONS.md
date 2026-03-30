@@ -1,5 +1,101 @@
 # Operations Guide — coder4gov Reference Architecture
 
+## Forking This Repo
+
+Before deploying, fork the repo and update all project-specific
+values to match your environment. The checklist below covers every
+file that contains hard-coded defaults.
+
+### Rename Checklist
+
+1. **Terraform backend** — S3 bucket, DynamoDB table, and region in
+   every `providers.tf` file. Use the helper script:
+
+   ```bash
+   scripts/rename-backend.sh --project-name myproject --region us-west-2
+   ```
+
+   This rewrites `bucket`, `dynamodb_table`, and `region` in all
+   backend blocks under `infra/terraform/`.
+
+2. **`project_name`** — Set in `terraform.tfvars` (or pass via
+   `TFVARS=`). This prefixes resource names (S3, DynamoDB, RDS,
+   EKS cluster, etc.).
+
+3. **`domain_name`** — Set in `terraform.tfvars`. Used for Route 53
+   zone, ACM certificates, and Coder's access URL.
+
+4. **Secrets Manager paths** — Secrets are stored under a
+   `${project_name}/` prefix (e.g. `coder4gov/coder-license`). If
+   you change `project_name`, the paths update automatically via
+   Terraform. Verify `seed-secrets.sh` targets the correct path
+   before running it.
+
+5. **FluxCD HelmRelease domain references** — The manifests in
+   `clusters/gov-demo/` contain hard-coded domain references
+   (e.g. `dev.coder4gov.com`). Update these to your domain:
+
+   ```bash
+   grep -r 'coder4gov.com' clusters/
+   ```
+
+   Replace every occurrence with your domain.
+
+6. **GitHub Actions secrets** — If using the CI workflows, update
+   these repository secrets:
+
+   | Secret | Value |
+   |--------|-------|
+   | `ECR_REGISTRY` | Your ECR registry URL (`<account>.dkr.ecr.<region>.amazonaws.com`) |
+   | `AWS_ROLE_ARN` | OIDC role ARN for GitHub Actions to assume |
+
+7. **Route 53 hosted zone** — If your domain is not registered in
+   the same AWS account, create a hosted zone in Layer 1 and point
+   your registrar's NS records to Route 53.
+
+### Deploying to GovCloud
+
+To deploy in AWS GovCloud instead of commercial AWS:
+
+1. **Copy the example tfvars:**
+
+   ```bash
+   cp infra/terraform/govcloud.tfvars.example terraform.tfvars
+   ```
+
+2. **Run the backend rename script** with the GovCloud region:
+
+   ```bash
+   scripts/rename-backend.sh --project-name myproject --region us-gov-west-1
+   ```
+
+   This updates the `region` literal in every `providers.tf` backend
+   block. Terraform backend blocks do not support variables, so the
+   region must be a hard-coded string.
+
+3. **Adjust instance types** — `m7a` instances may not be available
+   in all GovCloud regions. The example tfvars defaults to `m6i`
+   variants. Check availability in your target region and update
+   `system_node_instance_types` and `workspace_instance_types` as
+   needed.
+
+4. **FIPS endpoints** — FIPS API endpoints are enabled by default
+   (`use_fips_endpoints = true`). No additional changes are needed
+   for GovCloud; FIPS is the expected posture in both commercial
+   and GovCloud partitions.
+
+5. **Availability zones** — GovCloud `us-gov-west-1` has two AZs.
+   The example tfvars sets `workspace_azs` accordingly. Verify the
+   AZ list matches your target region.
+
+6. **Deploy normally:**
+
+   ```bash
+   make init
+   make apply TFVARS=terraform.tfvars
+   make inject-outputs
+   ```
+
 ## Overview
 
 | Component | Location | Purpose |
@@ -96,25 +192,6 @@ Deploys Karpenter, ALB Controller, External Secrets Operator.
 
 Apply FluxCD manifests from `clusters/gov-demo/` or bootstrap FluxCD to
 reconcile the cluster path.
-
-### GovCloud Migration
-
-To deploy in GovCloud instead of commercial AWS:
-
-1. Update `terraform.tfvars` in each layer:
-   ```hcl
-   aws_region    = "us-gov-west-1"
-   aws_partition = "aws-us-gov"
-   ```
-2. Update `backend "s3"` blocks in each `providers.tf`:
-   ```hcl
-   region = "us-gov-west-1"
-   ```
-3. Update `workspace_azs` in Layer 4:
-   ```hcl
-   workspace_azs = ["us-gov-west-1a", "us-gov-west-1b"]
-   ```
-4. Re-run `terraform init -reconfigure` and `terraform apply` for each layer.
 
 ## Day 2 — Operations
 
