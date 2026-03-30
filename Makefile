@@ -5,7 +5,7 @@
 # Layers (applied in order):
 #   0-state     — S3 backend + DynamoDB lock table (local state bootstrap)
 #   1-network   — VPC, subnets, DNS, ACM
-#   2-data      — RDS, ECR, KMS, Secrets Manager
+#   2-data      — RDS, ECR, KMS, Secrets Manager, CI/CD IAM
 #   3-eks       — EKS cluster, IRSA, storage classes
 #   4-bootstrap — Karpenter, ALB controller, external-secrets
 #
@@ -28,8 +28,11 @@ TF_VAR_FLAG := $(if $(TFVARS),-var-file=$(abspath $(TFVARS)),)
 # Base directory for all Terraform layers.
 TF_DIR := infra/terraform
 
-# Layers in apply order (0 → 4).
-LAYERS := 0-state 1-network 2-data 3-eks 4-bootstrap
+# Remote layers (require S3 backend from layer 0).
+REMOTE_LAYERS := 1-network 2-data 3-eks 4-bootstrap
+
+# All layers in apply order.
+LAYERS := 0-state $(REMOTE_LAYERS)
 
 # Reverse order for destroy (4 → 0).
 LAYERS_REV := 4-bootstrap 3-eks 2-data 1-network 0-state
@@ -58,10 +61,12 @@ help: ## Show available commands.
 # =============================================================================
 # init
 # =============================================================================
-init: ## Run terraform init in every layer (0→4).
-	@echo "==> Initializing layer 0-state (local backend — bootstraps S3 state)..."
-	@cd $(TF_DIR)/0-state && terraform init
-	@for layer in 1-network 2-data 3-eks 4-bootstrap; do \
+init: ## Run terraform init in every layer (0→4). Applies layer 0 first if S3 bucket missing.
+	@echo "==> Initializing layer 0-state (local backend)..."
+	@( cd $(TF_DIR)/0-state && terraform init )
+	@echo "==> Applying layer 0-state to ensure S3 backend exists..."
+	@( cd $(TF_DIR)/0-state && terraform apply -auto-approve $(TF_VAR_FLAG) )
+	@for layer in $(REMOTE_LAYERS); do \
 		echo "==> Initializing layer $$layer..."; \
 		( cd $(CURDIR)/$(TF_DIR)/$$layer && terraform init ) || exit 1; \
 	done
@@ -79,9 +84,9 @@ plan: ## Run terraform plan in every layer (0→4).
 # apply
 # =============================================================================
 apply: ## Run terraform apply -auto-approve in every layer (0→4).
-	@echo "==> Layer 0-state uses local state and must succeed before remote layers."
 	@for layer in $(LAYERS); do \
 		echo "==> Applying layer $$layer..."; \
+		( cd $(CURDIR)/$(TF_DIR)/$$layer && terraform init ) || exit 1; \
 		( cd $(CURDIR)/$(TF_DIR)/$$layer && terraform apply -auto-approve $(TF_VAR_FLAG) ) || exit 1; \
 	done
 

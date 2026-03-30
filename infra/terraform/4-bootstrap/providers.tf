@@ -35,7 +35,7 @@ terraform {
     key               = "4-bootstrap/terraform.tfstate"
     region            = "us-west-2"
     encrypt           = true
-    dynamodb_table    = "coder4gov-terraform-lock"
+    use_lockfile      = true
     use_fips_endpoint = true
   }
 }
