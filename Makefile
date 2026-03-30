@@ -1,5 +1,5 @@
 # =============================================================================
-# coder4gov — Terraform Orchestration
+# usgov-deploy-aws — Terraform Orchestration
 # =============================================================================
 #
 # Layers (applied in order):
@@ -47,7 +47,7 @@ TFLINT_CONFIG := $(CURDIR)/.tflint.hcl
 # =============================================================================
 help: ## Show available commands.
 	@echo ""
-	@echo "coder4gov — Terraform orchestration"
+	@echo "usgov-deploy-aws — Terraform orchestration"
 	@echo ""
 	@echo "Usage:  make <target> [TFVARS=filename.tfvars]"
 	@echo ""
@@ -132,11 +132,11 @@ inject-outputs: ## Run scripts/inject-outputs.sh to wire layer outputs.
 deploy: apply inject-outputs ## Apply all layers, inject outputs, then print next steps.
 	@echo ""
 	@echo "============================================"
-	@echo " coder4gov deploy complete."
+	@echo " usgov-deploy-aws deploy complete."
 	@echo ""
 	@echo " Next steps:"
 	@echo "   1. Verify the cluster:  kubectl get nodes"
 	@echo "   2. Seed secrets:        ./scripts/seed-secrets.sh"
-	@echo "   3. Deploy aws-gov-infra:"
-	@echo "        cd ../aws-gov-infra && make apply"
+	@echo "   3. Deploy usgov-env-demo:"
+	@echo "        cd ../usgov-env-demo && make apply"
 	@echo "============================================"

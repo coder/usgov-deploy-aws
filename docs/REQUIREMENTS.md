@@ -1,4 +1,4 @@
-# Requirements — coder4gov Reference Architecture
+# Requirements — usgov-deploy-aws Reference Architecture
 
 ## Purpose
 
@@ -21,7 +21,7 @@ can fork and deploy Coder without additional dependencies.
 - FIPS 140-3 compliance at all layers
 - GovCloud portability (parameterized region/partition)
 
-### Out of Scope (moved to aws-gov-infra)
+### Out of Scope (moved to usgov-env-demo)
 
 - GitLab CE deployment
 - Keycloak SSO
@@ -133,7 +133,7 @@ can fork and deploy Coder without additional dependencies.
 |---|---|---|
 | 1 | AWS-registered domain via Route 53 | No delegation needed, ACM validation automatic |
 | 2 | NAT Gateway per AZ (not fck-nat) | AWS managed, HA, no operational burden |
-| 3 | Single RDS instance (Coder DB only) | aws-gov-infra adds additional databases via remote state |
+| 3 | Single RDS instance (Coder DB only) | usgov-env-demo adds additional databases via remote state |
 | 4 | Karpenter (not Cluster Autoscaler) | Better bin-packing, faster scaling, consolidation |
 | 5 | External Secrets Operator (not Vault) | AWS-native, simpler, Secrets Manager is FIPS-validated |
 | 6 | Standalone repo | Customers can fork without understanding the full stack |

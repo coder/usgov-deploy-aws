@@ -1,4 +1,4 @@
-# coder4gov — Deploy Coder on AWS with FIPS & GovCloud compliance
+# usgov-deploy-aws — Deploy Coder on AWS with FIPS & GovCloud compliance
 
 A forkable reference architecture for deploying
 [Coder](https://coder.com) on AWS EKS in government-compliant
@@ -6,7 +6,7 @@ environments. FIPS 140-3, GovCloud-ready, no static IAM keys.
 
 Fork this repo, set your variables, and run `make apply`. For the
 full demo stack (GitLab, Keycloak, LiteLLM, monitoring), see
-[coder/aws-gov-infra](https://github.com/coder/aws-gov-infra) which
+[coder/usgov-env-demo](https://github.com/coder/usgov-env-demo) which
 layers on top via `terraform_remote_state`.
 
 ## Architecture
@@ -36,8 +36,8 @@ on top.
 1. **Fork this repo.**
 
    ```bash
-   gh repo fork coder/coder4gov --clone
-   cd coder4gov
+   gh repo fork coder/usgov-deploy-aws --clone
+   cd usgov-deploy-aws
    ```
 
 2. **Rename the Terraform backend** to point at your state resources.
@@ -165,7 +165,7 @@ checklist and guidelines for contributing back upstream.
 
 ## Related
 
-[coder/aws-gov-infra](https://github.com/coder/aws-gov-infra) — Full
+[coder/usgov-env-demo](https://github.com/coder/usgov-env-demo) — Full
 platform overlay that layers GitLab, Keycloak, LiteLLM, and
 observability on top of this repo via `terraform_remote_state`. Not
 required for a standalone Coder deployment.

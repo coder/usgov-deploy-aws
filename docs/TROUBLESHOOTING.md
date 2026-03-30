@@ -1,4 +1,4 @@
-# Troubleshooting — coder4gov
+# Troubleshooting — usgov-deploy-aws
 
 Common failures and their fixes, organized by symptom.
 
@@ -195,7 +195,7 @@ terraform apply
 
 ## 9. inject-outputs.sh shows MISS
 
-**Symptom:** Running `scripts/inject-outputs.sh` (in `aws-gov-infra`)
+**Symptom:** Running `scripts/inject-outputs.sh` (in `usgov-env-demo`)
 prints `SKIP` or `WARNING: Could not resolve the following values` for
 one or more outputs.
 
@@ -205,11 +205,11 @@ applied yet, or `terraform init` was not run in that layer directory.
 **Fix:** Apply the relevant upstream layer first:
 
 ```bash
-# If coder4gov outputs are missing:
-cd ../coder4gov/infra/terraform/<layer>
+# If usgov-deploy-aws outputs are missing:
+cd ../usgov-deploy-aws/infra/terraform/<layer>
 terraform init && terraform apply
 
-# If aws-gov-infra outputs are missing:
+# If usgov-env-demo outputs are missing:
 cd infra/terraform/<layer>
 terraform init && terraform apply
 ```

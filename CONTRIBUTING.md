@@ -1,11 +1,11 @@
-# Contributing to coder4gov
+# Contributing to usgov-deploy-aws
 
 ## Forking for Your Organization
 
 1. **Fork the repository** — click "Fork" on GitHub or run:
 
    ```bash
-   gh repo fork coder/coder4gov --clone
+   gh repo fork coder/usgov-deploy-aws --clone
    ```
 
 2. **Rename key values** in your fork to match your environment:
@@ -24,7 +24,7 @@
 ## Contributing Back Upstream
 
 Improvements that benefit all users are welcome as pull requests to
-`coder/coder4gov`. Please:
+`coder/usgov-deploy-aws`. Please:
 
 1. Open an issue describing the change before writing code.
 2. Keep PRs focused — one logical change per PR.

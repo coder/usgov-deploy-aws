@@ -69,7 +69,7 @@ spec:
           alb.ingress.kubernetes.io/certificate-arn: "" # TODO: Fill from terraform output – acm_wildcard_cert_arn
           alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
           alb.ingress.kubernetes.io/ssl-redirect: "443"
-          # alb.ingress.kubernetes.io/wafv2-acl-arn: "" # Optional: add WAF ACL ARN from aws-gov-infra
+          # alb.ingress.kubernetes.io/wafv2-acl-arn: "" # Optional: add WAF ACL ARN from usgov-env-demo
           alb.ingress.kubernetes.io/healthcheck-path: /healthz
         host: dev.coder4gov.com
 

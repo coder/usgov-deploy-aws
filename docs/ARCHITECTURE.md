@@ -1,4 +1,4 @@
-# Architecture — coder4gov Reference Architecture
+# Architecture — usgov-deploy-aws Reference Architecture
 
 Coder on AWS (GovCloud-portable), FIPS-compliant, multi-AZ.
 
@@ -60,12 +60,12 @@ Coder on AWS (GovCloud-portable), FIPS-compliant, multi-AZ.
          └──────────┘   └──────────┘   └──────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────────┐
-│  aws-gov-infra (separate repo) layers on top via terraform_remote_state│
+│  usgov-env-demo (separate repo) layers on top via terraform_remote_state│
 │                                                                        │
 │  Adds: GitLab CE · Keycloak · LiteLLM · Observability (Grafana/Loki)  │
 │        Istio (mTLS) · WAF · OpenSearch (SIEM) · SES                   │
 │                                                                        │
-│  See: github.com/coder/aws-gov-infra                                  │
+│  See: github.com/coder/usgov-env-demo                                 │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -217,9 +217,9 @@ sequenceDiagram
 | RDS | Automated snapshots (7d retention) | < 1h | < 5 min |
 | Coder config | Git (this repo) | < 30 min | Last commit |
 
-## Integration Point — aws-gov-infra
+## Integration Point — usgov-env-demo
 
-This repo's Terraform state is consumed by `coder/aws-gov-infra` via
+This repo's Terraform state is consumed by `coder/usgov-env-demo` via
 `terraform_remote_state`. That repo layers additional platform services
 on top of the infrastructure defined here. No changes to this repo are
 required to support those additions.
