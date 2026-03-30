@@ -85,6 +85,12 @@ resource "helm_release" "external_secrets" {
   chart      = "external-secrets"
   version    = var.eso_chart_version
 
+  # Wait for ALB controller webhook to be ready. It installs a
+  # mutating webhook that intercepts Service creation; if ESO's
+  # services are created before the webhook has endpoints, the
+  # install fails with "no endpoints available."
+  depends_on = [helm_release.alb_controller]
+
   # --- Service account with IRSA annotation ---
   set {
     name  = "serviceAccount.create"

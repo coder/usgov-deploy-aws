@@ -26,7 +26,7 @@ variable "use_fips_endpoints" {
 variable "cluster_version" {
   description = "Kubernetes version for the EKS cluster (EKS-001)."
   type        = string
-  default     = "1.32"
+  default     = "1.33"
 }
 
 variable "system_node_instance_types" {
