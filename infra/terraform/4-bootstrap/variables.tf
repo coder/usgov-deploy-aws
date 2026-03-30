@@ -38,7 +38,7 @@ variable "tags" {
 variable "karpenter_chart_version" {
   description = "Helm chart version for the Karpenter controller."
   type        = string
-  default     = "1.9.0"
+  default     = "1.10.0"
 }
 
 variable "workspace_instance_types" {
@@ -67,7 +67,7 @@ variable "workspace_azs" {
 variable "alb_controller_chart_version" {
   description = "Helm chart version for the AWS Load Balancer Controller."
   type        = string
-  default     = "1.12.0"
+  default     = "1.14.0"
 }
 
 # ---------------------------------------------------------------------------
