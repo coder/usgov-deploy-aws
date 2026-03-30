@@ -2,6 +2,73 @@
 
 Coder on AWS (GovCloud-portable), FIPS-compliant, multi-AZ.
 
+## Architecture at a Glance
+
+```text
+┌─────────────────────────────────────────────────────────────────────────┐
+│                      TERRAFORM LAYER CHAIN                             │
+│                                                                        │
+│  ┌──────────┐   ┌──────────────┐   ┌─────────────┐   ┌────────────┐  │
+│  │ 0-state  │──▶│  1-network   │──▶│   2-data    │──▶│   3-eks    │  │
+│  │          │   │              │   │             │   │            │  │
+│  │ S3 bucket│   │ VPC (multi-AZ│   │ RDS PG 15  │   │ EKS 1.32  │  │
+│  │ DynamoDB │   │ 6 subnets   │   │ KMS CMK    │   │ IRSA roles │  │
+│  │ (TF lock)│   │ NAT Gateways│   │ ECR repos  │   │ OIDC provdr│  │
+│  └──────────┘   │ Route 53    │   │ Secrets Mgr│   └─────┬──────┘  │
+│                  │ ACM cert    │   └─────────────┘         │         │
+│                  └──────────────┘                           ▼         │
+│                                                    ┌──────────────┐  │
+│                                                    │ 4-bootstrap  │  │
+│                                                    │              │  │
+│                                                    │ Karpenter    │  │
+│                                                    │ ALB Ctrlr    │  │
+│                                                    │ Ext Secrets  │  │
+│                                                    │ FluxCD       │  │
+│                                                    └──────┬───────┘  │
+└───────────────────────────────────────────────────────────┼──────────┘
+                                                            │
+                         FluxCD reconciles                  │
+                         clusters/gov-demo/                 ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                     EKS CLUSTER (coder4gov-eks)                        │
+│                                                                        │
+│  ┌─────────── System Nodes (m7a.xlarge, ON_DEMAND) ──────────────┐    │
+│  │                                                                │    │
+│  │  ┌──────────────┐  ┌───────────────────┐  ┌────────────────┐  │    │
+│  │  │ coder-server │  │ coder-provisioner │  │   Karpenter    │  │    │
+│  │  │   (coderd)   │  │      (×2)         │  │  controller    │  │    │
+│  │  └──────┬───────┘  └────────┬──────────┘  └────────────────┘  │    │
+│  │         │                   │                                  │    │
+│  │  ┌──────────────┐  ┌───────────────────┐                      │    │
+│  │  │ ALB Ctrlr    │  │ External Secrets  │                      │    │
+│  │  └──────────────┘  └───────────────────┘                      │    │
+│  └────────────────────────────────────────────────────────────────┘    │
+│                                                                        │
+│  ┌─────────── Karpenter NodePool: workspaces (spot+OD) ──────────┐    │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐           │    │
+│  │  │ Workspace A │  │ Workspace B │  │ Workspace …  │           │    │
+│  │  └─────────────┘  └─────────────┘  └─────────────┘           │    │
+│  └────────────────────────────────────────────────────────────────┘    │
+└──────────────────────────────┬──────────────────────────────────────────┘
+                               │
+               ┌───────────────┼───────────────┐
+               ▼               ▼               ▼
+         ┌──────────┐   ┌──────────┐   ┌──────────────┐
+         │ RDS PG15 │   │ Secrets  │   │ Route 53     │
+         │ (multi-AZ│   │ Manager  │   │ coder4gov.com│
+         │  + FIPS) │   │ + KMS    │   │ + ACM cert   │
+         └──────────┘   └──────────┘   └──────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│  aws-gov-infra (separate repo) layers on top via terraform_remote_state│
+│                                                                        │
+│  Adds: GitLab CE · Keycloak · LiteLLM · Observability (Grafana/Loki)  │
+│        Istio (mTLS) · WAF · OpenSearch (SIEM) · SES                   │
+│                                                                        │
+│  See: github.com/coder/aws-gov-infra                                  │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
 ## System Overview
 
 ```mermaid
