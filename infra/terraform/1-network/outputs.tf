@@ -59,12 +59,7 @@ output "nat_gateway_ids" {
 
 output "route53_zone_id" {
   description = "Zone ID of the Route 53 hosted zone for the domain."
-  value       = aws_route53_zone.main.zone_id
-}
-
-output "route53_nameservers" {
-  description = "Nameservers for the Route 53 hosted zone."
-  value       = aws_route53_zone.main.name_servers
+  value       = data.aws_route53_zone.main.zone_id
 }
 
 # ---------------------------------------------------------------------------

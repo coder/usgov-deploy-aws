@@ -87,6 +87,10 @@ apply: ## Run terraform apply -auto-approve in every layer (0→4).
 	@for layer in $(LAYERS); do \
 		echo "==> Applying layer $$layer..."; \
 		( cd $(CURDIR)/$(TF_DIR)/$$layer && terraform init ) || exit 1; \
+		if [ "$$layer" = "1-network" ]; then \
+			echo "    (targeting ACM certs first to resolve for_each)"; \
+			( cd $(CURDIR)/$(TF_DIR)/$$layer && terraform apply -auto-approve -target=aws_acm_certificate.wildcard $(TF_VAR_FLAG) ) || exit 1; \
+		fi; \
 		( cd $(CURDIR)/$(TF_DIR)/$$layer && terraform apply -auto-approve $(TF_VAR_FLAG) ) || exit 1; \
 	done
 
