@@ -1,5 +1,9 @@
 # usgov-deploy-aws — Deploy Coder on AWS with FIPS & GovCloud compliance
 
+> **⚠️ Work in Progress — This repository is under active development and is not yet
+> production-ready. Structure, configuration, and documentation are subject to change
+> without notice. Use as a reference or starting point, not a turn-key deployment.**
+
 A forkable reference architecture for deploying
 [Coder](https://coder.com) on AWS EKS in government-compliant
 environments. FIPS 140-3, GovCloud-ready, no static IAM keys.
